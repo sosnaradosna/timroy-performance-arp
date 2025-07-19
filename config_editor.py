@@ -297,6 +297,17 @@ class PatternWidget(QGroupBox):
             self.enable_btn.setChecked(self._enabled)
         self.update()
 
+    # ------------------------------------------------------------------
+    # External setter for enabled flag (used by master toggle)
+    # ------------------------------------------------------------------
+
+    def set_enabled(self, flag: bool) -> None:
+        """Programmatically enable/disable pattern without altering controls."""
+        self._enabled = bool(flag)
+        # update underlying data so export_data reflects new state
+        self._data["enabled"] = self._enabled
+        self._update_opacity()
+
     def _make_combo(self, options: List[str], current: str) -> QComboBox:
         box = QComboBox()
         for opt in options:
@@ -796,6 +807,10 @@ class ConfigEditor(QMainWindow):
         self.pattern_widgets: Dict[str, PatternWidget] = {}
         self.rand_settings = RandomSettings()
 
+        # Master arpeggiator enable state
+        self._arp_enabled: bool = True
+        self._prev_pattern_enabled: Dict[str, bool] = {}
+
         # Prefer loading a preset named "Default.json" from presets directory if it exists
         default_preset_path = (Path(__file__).resolve().parent / "presets" / "Default.json")
         if default_preset_path.exists():
@@ -956,7 +971,20 @@ class ConfigEditor(QMainWindow):
         left_pad.setFixedWidth(20)
         toolbar.addWidget(left_pad)
 
-        # --- Global Random button (left) ---
+        # --- Master Power toggle ---
+        power_icon_path = Path(__file__).resolve().parent / "icons" / "ic_power.svg"
+        self.master_enable_btn = QToolButton()
+        self.master_enable_btn.setIcon(QIcon(str(power_icon_path)))
+        self.master_enable_btn.setCheckable(True)
+        self.master_enable_btn.setChecked(True)
+        self.master_enable_btn.setStyleSheet(
+            "QToolButton { border:none; padding:0px; }\n"
+            "QToolButton:!checked { opacity: 0.3; }"
+        )
+        self.master_enable_btn.clicked.connect(self._toggle_master_enabled)  # type: ignore[arg-type]
+        toolbar.addWidget(self.master_enable_btn)
+
+        # --- Global Random button (next) ---
         btn_random = QPushButton("Global Random")
         btn_random.setMinimumHeight(40)
         btn_random.clicked.connect(self.randomize_all)  # type: ignore[arg-type]
@@ -1019,9 +1047,29 @@ class ConfigEditor(QMainWindow):
         self._update_preset_name()
 
     def randomize_all(self, checked: bool = False):  # noqa: F841
+        if not self._arp_enabled:
+            return
         for _name, pw in self.pattern_widgets.items():
             if pw.is_enabled():
                 pw.randomize(self.rand_settings)
+
+    # ----------------------- master enable handler -----------------------
+
+    def _toggle_master_enabled(self, checked: bool):
+        """Toggle entire arpeggiator on/off remembering individual states."""
+        self._arp_enabled = bool(checked)
+        if self._arp_enabled:
+            # restore per-pattern previous states
+            for name, pw in self.pattern_widgets.items():
+                desired = self._prev_pattern_enabled.get(name, True)
+                pw.set_enabled(desired)
+        else:
+            # save current states and disable all
+            self._prev_pattern_enabled = {name: pw.is_enabled() for name, pw in self.pattern_widgets.items()}
+            for pw in self.pattern_widgets.values():
+                pw.set_enabled(False)
+        # save & notify router
+        self.save_current()
 
     def open_random_settings(self):
         dlg = RandomSettingsDialog(self.rand_settings, list(self.pattern_widgets.keys()), self)
