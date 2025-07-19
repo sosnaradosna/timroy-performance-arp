@@ -351,12 +351,17 @@ def main():
         step_val = steps[step_pos]
 
         # note index resolution
-        if isinstance(step_val, str) and step_val.upper() == "R":
-            if len(rt["rand"]) < len(steps):
-                rt["rand"] += [None]*(len(steps)-len(rt["rand"]))
-            if rt["rand"][step_pos] is None:  # type: ignore[index]
-                rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index,assignment]
-            idx = rt["rand"][step_pos]
+        if isinstance(step_val, str):
+            if step_val.upper() == "X":
+                return  # rest – do nothing
+            if step_val.upper() == "R":
+                if len(rt["rand"]) < len(steps):
+                    rt["rand"] += [None]*(len(steps)-len(rt["rand"]))
+                if rt["rand"][step_pos] is None:  # type: ignore[index]
+                    rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index,assignment]
+                idx = rt["rand"][step_pos]
+            else:
+                idx = int(step_val)
         else:
             idx = int(step_val)
 
@@ -482,11 +487,16 @@ def main():
                         step_val = steps[step_pos]
 
                         # Handle 'R' (random) value
-                        if isinstance(step_val, str) and step_val.upper() == "R":
-                            if len(rt["rand"]) < len(steps):
-                                rt["rand"] += [None]*(len(steps)-len(rt["rand"]))
-                            if rt["rand"][step_pos] is None:  # type: ignore[index]
-                                rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index,assignment]
+                        if isinstance(step_val, str):
+                            if step_val.upper() == "X":
+                                # rest – advance step and skip note generation
+                                rt["step"] = (rt["step"] + 1) % plen
+                                continue
+                            if step_val.upper() == "R":
+                                if len(rt["rand"]) < len(steps):
+                                    rt["rand"] += [None]*(len(steps)-len(rt["rand"]))
+                                if rt["rand"][step_pos] is None:  # type: ignore[index]
+                                    rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index,assignment]
                             idx = rt["rand"][step_pos]
                         else:
                             idx = int(step_val)
