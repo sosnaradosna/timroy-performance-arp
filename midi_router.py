@@ -205,12 +205,28 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
         division_str = str(pconf.get("division", "1/16"))
         pulses_val = parse_division(division_str)
 
+        # ---------------- Gate list (1-100 %) ----------------
+        gate_raw = pconf.get("gate", [])
+        if not gate_raw:
+            gate_list = [100] * length
+        else:
+            gate_list: List[int] = []
+            for v in gate_raw[:length]:
+                try:
+                    g_val = int(v)
+                except (ValueError, TypeError):
+                    g_val = 100
+                gate_list.append(max(1, min(100, g_val)))
+            if len(gate_list) < length:
+                gate_list += [100] * (length - len(gate_list))
+
         patterns_cfg[pname] = {
             "length": max(1, min(16, length)),
             "steps": steps_list,
             "octave": max(-5, min(5, octave_shift)),  # clamp defensively
             "velocity": velocity_list,
             "vrandom": vrandom_list,
+            "gate": gate_list,
             "pulses": float(pulses_val),
         }
 
@@ -278,6 +294,8 @@ def main():
             "step": 0,
             "rand": [],
             "rand_vel": [],
+            "note_on": None,
+            "gate_left": 0.0,
         }
 
     # -------------------------------------------------------------------
@@ -386,6 +404,7 @@ def main():
                         steps = cfg["steps"]
                         velocities = cfg["velocity"]
                         vrands = cfg["vrandom"]
+                        gates = cfg["gate"]
 
                         step_pos = rt["step"] % plen
                         # Reset random cache at start of cycle
@@ -421,14 +440,23 @@ def main():
                         else:
                             base_vel = int(vel_val)
 
+                        # gate duration
+                        gate_percent = gates[step_pos % len(gates)] if gates else 100
+
                         # apply octave shift (12 semitones per octave)
-                        octave = int(cfg.get("octave", 0))
+                        octave = int(cfg["octave"])
                         note += octave * 12
                         if not (0 <= note <= 127):
                             continue  # skip if out of MIDI range
                         port, ch = outputs[name]
+                        # if previous note still on, turn it off
+                        if rt["note_on"] is not None:
+                            port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+
                         port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
                         last_played[name] = note
+                        rt["note_on"] = note
+                        rt["gate_left"] = cfg["pulses"] * gate_percent / 100.0
 
                         # advance step
                         rt["step"] = (rt["step"] + 1) % plen
