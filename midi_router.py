@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 
 import mido
+import random
 import os, signal, time
 LOCK_PATH = Path.home() / ".tr_router.lock"
 
@@ -131,10 +132,15 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             pconf = default_pattern(pname)
         length = int(pconf.get("length", len(pconf.get("steps", []))))
         steps_list = pconf.get("steps", [])[:16]
+        octave_shift = int(pconf.get("oktawa", 0))  # -2..2
         if not steps_list:
             steps_list = default_pattern(pname)["steps"]
             length = len(steps_list)
-        patterns_cfg[pname] = {"length": max(1, min(16, length)), "steps": steps_list}
+        patterns_cfg[pname] = {
+            "length": max(1, min(16, length)),
+            "steps": steps_list,
+            "octave": max(-5, min(5, octave_shift))  # clamp defensively
+        }
 
     return in_ch, out_map, patterns_cfg
 
@@ -194,6 +200,8 @@ def main():
     tick_counter = 0                        # MIDI clock ticks since start
     step_index = 0                          # 16-th step counter
     last_played: Dict[str, Optional[int]] = {name: None for name in outputs}
+    # store per-pattern random indices for 'R' steps
+    pattern_state: Dict[str, Dict[str, List[Optional[int]]]] = {name: {"rand": []} for name in outputs}
 
     input_name = "TR Router In"
     print(
@@ -241,14 +249,32 @@ def main():
                         if plen == 0 or not steps:
                             continue
                         step_pos = step_index % plen
-                        # guard index range
-                        if step_pos >= len(steps):
-                            continue
-                        idx = steps[step_pos]
-                        if not (1 <= idx <= ln):
+                        # Reset random cache at start of cycle
+                        if step_pos == 0:
+                            pattern_state[name]["rand"] = [None] * len(steps)
+
+                        step_val = steps[step_pos]
+
+                        # Handle 'R' (random) value
+                        if isinstance(step_val, str) and step_val.upper() == "R":
+                            # ensure cache list length
+                            if len(pattern_state[name]["rand"]) < len(steps):
+                                pattern_state[name]["rand"] += [None]*(len(steps)-len(pattern_state[name]["rand"]))
+                            if pattern_state[name]["rand"][step_pos] is None:
+                                pattern_state[name]["rand"][step_pos] = random.randint(1, ln)
+                            idx = pattern_state[name]["rand"][step_pos]
+                        else:
+                            idx = int(step_val)
+
+                        if idx is None or not (1 <= idx <= ln):
                             # index out of current chord range → silent step
                             continue
                         note = chord_notes[idx - 1]
+                        # apply octave shift (12 semitones per octave)
+                        octave = int(cfg.get("octave", 0))
+                        note += octave * 12
+                        if not (0 <= note <= 127):
+                            continue  # skip if out of MIDI range
                         port, ch = outputs[name]
                         port.send(mido.Message("note_on", note=note, velocity=100, channel=ch))
                         last_played[name] = note
