@@ -240,6 +240,15 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             if len(soct_list) < length:
                 soct_list += [0] * (length - len(soct_list))
 
+        # Prepare r-oct list (strings tokens)
+        roct_raw = pconf.get("r-oct", pconf.get("roct", []))
+        if not roct_raw:
+            roct_list = ["0"] * length
+        else:
+            roct_list = [str(v) for v in roct_raw[:length]]
+            if len(roct_list) < length:
+                roct_list += ["0"] * (length - len(roct_list))
+
         division_str = str(pconf.get("division", "1/16"))
         pulses_val = parse_division(division_str)
 
@@ -269,6 +278,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             "vrandom": vrandom_list,
             "sprob": sprob_list,
             "soct": soct_list,
+            "roct": roct_list,
             "gate": gate_list,
             "pulses": float(pulses_val),
         }
@@ -284,6 +294,28 @@ def create_output_ports(out_map: Dict[str, int]):
         ports[name] = (port, ch)
         print(f"Opened virtual output '{name}' on channel {ch + 1}")
     return ports
+
+
+# ---------------------------------------------------------------------------
+# Helper for Random Octave token parsing
+# ---------------------------------------------------------------------------
+
+
+def pick_roct(token: str) -> int:
+    """Convert R-Oct token to random octave shift (-2..2)."""
+    token = token.strip()
+    if token in ("0", "", "0.0"):
+        return 0
+    mapping = {
+        "+1": [0, 1],
+        "+2": [0, 1, 2],
+        "-1": [0, -1],
+        "-2": [0, -1, -2],
+        "+-1": [-1, 0, 1],
+        "+-2": [-2, -1, 0, 1, 2],
+    }
+    choices = mapping.get(token, [0])
+    return random.choice(choices)
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +559,7 @@ def main():
                         gates = cfg["gate"]
                         sprobs = cfg.get("sprob", [100]*len(steps))
                         socts = cfg.get("soct", [0]*len(steps))
+                        rocts = cfg.get("roct", ["0"]*len(steps))
 
                         step_pos = rt["step"] % plen
                         # Reset random cache at start of cycle
@@ -558,7 +591,8 @@ def main():
 
                         if idx is None or not (1 <= idx <= ln):
                             idx = random.randint(1, ln)
-                        note = chord_notes[idx - 1] + (cfg["octave"] + socts[step_pos % len(socts)]) * 12
+                        extra_shift = pick_roct(rocts[step_pos % len(rocts)])
+                        note_num = chord_notes[idx - 1] + (cfg["octave"] + socts[step_pos % len(socts)] + extra_shift) * 12
                         # choose velocity for this step
                         vel_val = velocities[step_pos % len(velocities)] if velocities else 100
                         vrand_val = vrands[step_pos % len(vrands)] if vrands else 0
@@ -590,7 +624,7 @@ def main():
                         tie_flag = isinstance(gate_val, str) and str(gate_val).upper() == "T"
 
                         # note already includes global + step octave shift
-                        if not (0 <= note <= 127):
+                        if not (0 <= note_num <= 127):
                             continue  # skip if out of MIDI range
                         port, ch = outputs[name]
                         # note-on/note-off logic with tie
@@ -598,25 +632,25 @@ def main():
                             # Tie step: sustain or overlap
                             if rt["note_on"] is None:
                                 # Nothing playing, just start note
-                                port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
-                                rt["note_on"] = note
+                                port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+                                rt["note_on"] = note_num
                             else:
-                                if rt["note_on"] != note:
+                                if rt["note_on"] != note_num:
                                     # Different note – overlap for glide
                                     # overlap 1 tick: schedule previous note off after next tick
                                     rt["pending_off"] = rt["note_on"]
                                     rt["pending_left"] = 1.0
-                                    port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
-                                    rt["note_on"] = note
+                                    port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+                                    rt["note_on"] = note_num
                                 # same note: keep sustaining (no retrigger)
                             rt["gate_left"] = -1.0  # sustain until next non-tie gate
                             rt["tie_prev"] = True
                         else:
                             # Regular gate step
-                            same_note = (rt["note_on"] == note)
+                            same_note = (rt["note_on"] == note_num)
                             if rt["note_on"] is None:
-                                port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
-                                rt["note_on"] = note
+                                port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+                                rt["note_on"] = note_num
                             else:
                                 if same_note:
                                     # Note already held, just update gate length
@@ -626,13 +660,13 @@ def main():
                                         # From tie: glide overlap with 1 tick
                                         rt["pending_off"] = rt["note_on"]
                                         rt["pending_left"] = 1.0
-                                        port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
-                                        rt["note_on"] = note
+                                        port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+                                        rt["note_on"] = note_num
                                     else:
                                         # normal retrigger
                                         port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
-                                        port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
-                                    rt["note_on"] = note
+                                        port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+                                    rt["note_on"] = note_num
 
                             gate_percent = int(gate_val) if not isinstance(gate_val, str) else 100
                             rt["gate_left"] = cfg["pulses"] * gate_percent / 100.0

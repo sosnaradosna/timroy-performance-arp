@@ -257,6 +257,8 @@ class PatternWidget(QGroupBox):
             ("velocity", 100),
             ("v-random", 0),
             ("s-prob", 100),
+            ("s-oct", 0),
+            ("r-oct", "0"),
             ("gate", 100),
         ):
             arr = self._data.get(key, [])
@@ -295,8 +297,29 @@ class PatternWidget(QGroupBox):
             spin = DragSpinBox(0, 100)
             spin.setValue(int(self._data["s-prob"][col]))
             self.grid.addWidget(spin, 4, col + 1)
+        # s-oct row
+        self.grid.addWidget(QLabel("S-Oct"), 5, 0)
+        for col in range(length):
+            box = QComboBox()
+            box.addItems([str(i) for i in range(-2,3)])
+            cur = str(self._data.get("s-oct", [0]*length)[col])
+            idx = box.findText(cur)
+            if idx>=0:
+                box.setCurrentIndex(idx)
+            self.grid.addWidget(box,5,col+1)
+        # r-oct row
+        self.grid.addWidget(QLabel("R-Oct"), 6, 0)
+        OCT_OPTIONS = ["0","+1","+2","-1","-2","+-1","+-2"]
+        for col in range(length):
+            box = QComboBox()
+            box.addItems(OCT_OPTIONS)
+            cur = str(self._data.get("r-oct", ["0"]*length)[col])
+            idx = box.findText(cur)
+            if idx>=0:
+                box.setCurrentIndex(idx)
+            self.grid.addWidget(box,6,col+1)
         # Gate row
-        self.grid.addWidget(QLabel("Gate"), 5, 0)
+        self.grid.addWidget(QLabel("Gate"), 7, 0)
         for col in range(length):
             spin = GateSpinBox()
             val = self._data["gate"][col]
@@ -304,7 +327,7 @@ class PatternWidget(QGroupBox):
                 spin.setText("T")
             else:
                 spin.setText(str(int(val)))
-            self.grid.addWidget(spin, 5, col + 1)
+            self.grid.addWidget(spin, 7, col + 1)
 
     # --------------------------------- export --------------------------------
 
@@ -318,6 +341,8 @@ class PatternWidget(QGroupBox):
         velocity: List[int] = []
         vrand: List[int] = []
         sprob: List[int] = []
+        soct: List[int] = []
+        roct: List[str] = []
         gate: List[Union[int, str]] = []
 
         # Extract from grid widgets row by row
@@ -337,9 +362,17 @@ class PatternWidget(QGroupBox):
         for col in range(length):
             spin: DragSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore
             sprob.append(spin.value())
-        # Gate row (row 5)
+        # s-oct row (row 5)
         for col in range(length):
-            spin: GateSpinBox = self.grid.itemAtPosition(5, col + 1).widget()  # type: ignore
+            box: QComboBox = self.grid.itemAtPosition(5, col + 1).widget()  # type: ignore
+            soct.append(int(box.currentText()))
+        # r-oct row (row 6)
+        for col in range(length):
+            box: QComboBox = self.grid.itemAtPosition(6, col + 1).widget()  # type: ignore
+            roct.append(box.currentText())
+        # Gate row (row 6)
+        for col in range(length):
+            spin: GateSpinBox = self.grid.itemAtPosition(7, col + 1).widget()  # type: ignore
             text = spin.value_text()
             if text == "T":
                 gate.append("T")
@@ -355,6 +388,8 @@ class PatternWidget(QGroupBox):
             "velocity": velocity,
             "v-random": vrand,
             "s-prob": sprob,
+            "s-oct": soct,
+            "r-oct": roct,
             "gate": gate,
             "oktawa": octave,
             "division": division,
@@ -398,9 +433,19 @@ class PatternWidget(QGroupBox):
             spin: DragSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore[assignment]
             if random.randint(1, 100) <= settings.sprob:
                 spin.setValue(random.randint(0, 100))  # type: ignore[attr-defined]
+        # s-oct row
+        for col in range(length):
+            box: QComboBox = self.grid.itemAtPosition(5, col + 1).widget()  # type: ignore[assignment]
+            if random.randint(1, 100) <= settings.sprob: # Assuming sprob controls s-oct randomization
+                box.setCurrentIndex(random.randrange(box.count()))
+        # r-oct row
+        for col in range(length):
+            box: QComboBox = self.grid.itemAtPosition(6, col + 1).widget()  # type: ignore[assignment]
+            if random.randint(1, 100) <= settings.sprob: # Assuming sprob controls r-oct randomization
+                box.setCurrentIndex(random.randrange(box.count()))
         # Gate row
         for col in range(length):
-            spin: GateSpinBox = self.grid.itemAtPosition(5, col + 1).widget()  # type: ignore
+            spin: GateSpinBox = self.grid.itemAtPosition(7, col + 1).widget()  # type: ignore
             if random.randint(1, 100) <= settings.gate:
                 if settings.allow_gate_T and random.random() < 0.2:
                     spin.setText("T")
@@ -422,6 +467,7 @@ class RandomSettings:
     velocity: int = 100
     vrandom: int = 100
     sprob: int = 100
+    roct: int = 100
     gate: int = 100
     patterns_enabled: Dict[str, bool] = field(
         default_factory=lambda: {
@@ -458,6 +504,7 @@ class RandomSettingsDialog(QDialog):
             ("Velocity", "velocity"),
             ("V-Random", "vrandom"),
             ("S-Prob", "sprob"),
+            ("R-Oct", "roct"),
             ("Gate", "gate"),
         ]
         for label, attr in sliders_cfg:
