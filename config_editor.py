@@ -94,6 +94,91 @@ class DragSpinBox(QLineEdit):
         self.setText(str(max(self._min, min(self._max, v))))
 
 
+# ---------------------------------------------------------------------------
+# Gate input supporting numeric 0-100 plus special 'T'
+# ---------------------------------------------------------------------------
+
+
+class GateSpinBox(QLineEdit):
+    """Input for Gate that supports 0-100 and special 'T', with drag behaviour."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._dragging = False
+        self._drag_start_pos: Optional[QPoint] = None
+        self._drag_start_val: int = 0  # 0-101 where 101 represents 'T'
+        self._px_per_step = 10
+
+    # ----------------------- helpers -----------------------
+
+    def _text_to_val(self) -> int:
+        txt = self.text().strip().upper()
+        if txt == "T":
+            return 101
+        try:
+            return max(0, min(100, int(txt)))
+        except ValueError:
+            return 0
+
+    def _val_to_text(self, val: int):
+        if val > 100:
+            self.setText("T")
+        else:
+            self.setText(str(max(0, min(100, val))))
+
+    # -------------------- mouse events ---------------------
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint()
+            self._drag_start_val = self._text_to_val()
+            event.accept()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging and self._drag_start_pos is not None:
+            dy = self._drag_start_pos.y() - event.globalPosition().toPoint().y()
+            steps = dy // self._px_per_step
+            new_val = self._drag_start_val + steps
+            # normalise range: val <=100 numeric; >100 treated as T cap
+            if new_val > 100:
+                new_val = 101
+            elif new_val < 0:
+                new_val = 0
+            self._val_to_text(new_val)
+            event.accept()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._dragging:
+            self._dragging = False
+            self._drag_start_pos = None
+            event.accept()
+        super().mouseReleaseEvent(event)
+
+    # ---------------------- API ----------------------------
+
+    def value_text(self) -> str:
+        """Return 'T' or numeric string"""
+        t = self.text().strip().upper()
+        if t == "T":
+            return "T"
+        try:
+            v = int(t)
+            return str(max(0, min(100, v)))
+        except ValueError:
+            return "100"
+
+    # Provide numeric value (T mapped to 101) for compatibility
+    def value(self) -> int:
+        vt = self.value_text()
+        if vt == "T":
+            return 101
+        return int(vt)
+
+
 class PatternWidget(QGroupBox):
     """Widget representing a single pattern block."""
 
@@ -136,7 +221,7 @@ class PatternWidget(QGroupBox):
         self.setLayout(main_layout)
 
         self._build_grid()
-        self.length_combo.currentTextChanged.connect(self._build_grid)
+        self.length_combo.currentTextChanged.connect(self._build_grid)  # type: ignore[arg-type]
 
     def _make_combo(self, options: List[str], current: str) -> QComboBox:
         box = QComboBox()
@@ -150,7 +235,7 @@ class PatternWidget(QGroupBox):
 
     # --------------------------------- grid ---------------------------------
 
-    def _build_grid(self, *_args):
+    def _build_grid(self, _changed: Optional[str] = None) -> None:
         # clear existing widgets
         while self.grid.count():
             item = self.grid.takeAt(0)
@@ -198,12 +283,12 @@ class PatternWidget(QGroupBox):
         # Gate row
         self.grid.addWidget(QLabel("Gate"), 4, 0)
         for col in range(length):
-            spin = DragSpinBox(0, 100)
+            spin = GateSpinBox()
             val = self._data["gate"][col]
             if isinstance(val, str) and val.upper() == "T":
                 spin.setText("T")
             else:
-                spin.setValue(int(val))
+                spin.setText(str(int(val)))
             self.grid.addWidget(spin, 4, col + 1)
 
     # --------------------------------- export --------------------------------
@@ -234,8 +319,8 @@ class PatternWidget(QGroupBox):
             vrand.append(spin.value())
         # Gate row (row 4)
         for col in range(length):
-            spin: DragSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore
-            text = spin.text().strip().upper()
+            spin: GateSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore
+            text = spin.value_text()
             if text == "T":
                 gate.append("T")
             else:
