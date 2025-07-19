@@ -165,7 +165,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             steps = list(range(1, 9))
         else:
             steps = list(range(8, 0, -1))
-        return {"length": len(steps), "steps": steps}
+        return {"length": len(steps), "steps": steps, "enabled": True}
 
     patterns_cfg: Dict[str, Dict[str, Any]] = {}
     for pname in out_map.keys():
@@ -183,6 +183,9 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
         # Ensure steps_list has exactly *length* elements
         if len(steps_list) < length:
             steps_list += [steps_list[-1]] * (length - len(steps_list))
+        # Enabled flag
+        enabled_flag = bool(pconf.get("enabled", True))
+
         # Prepare velocity list
         if not velocity_list_raw:
             velocity_list = [100] * length
@@ -286,6 +289,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             "roct": roct_list,
             "gate": gate_list,
             "pulses": float(pulses_val),
+            "enabled": enabled_flag,
         }
 
     return in_ch, out_map, patterns_cfg
@@ -405,6 +409,15 @@ def main():
     def play_pattern_step(pattern_name: str):
         """Send note for current step of pattern immediately."""
         cfg = pattern_cfgs[pattern_name]
+        if not cfg.get("enabled", True):
+            # pattern disabled – ensure any playing note is turned off
+            rt = pattern_state[pattern_name]
+            if rt["note_on"] is not None:
+                port, ch = outputs[pattern_name]
+                port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                rt["note_on"] = None
+                rt["gate_left"] = 0.0
+            return
         rt = pattern_state[pattern_name]
         plen = cfg["length"]
         steps = cfg["steps"]
@@ -522,6 +535,15 @@ def main():
 
                         pattern_cfgs = new_cfgs  # type: ignore[assignment]
 
+                        # Send NOTE_OFF for any playing notes before resetting state
+                        for pname_old, rt_old in pattern_state.items():
+                            if rt_old.get("note_on") is not None and pname_old in outputs:
+                                try:
+                                    port, ch = outputs[pname_old]
+                                    port.send(mido.Message("note_off", note=rt_old["note_on"], velocity=0, channel=ch))
+                                except Exception:
+                                    pass
+
                         # Recreate/refresh pattern_state dict
                         pattern_state.clear()
                         for name, cfg in pattern_cfgs.items():
@@ -560,6 +582,15 @@ def main():
                         continue
 
                     for name, cfg in pattern_cfgs.items():
+                        # Skip disabled patterns (send note_off if needed)
+                        if not cfg.get("enabled", True):
+                            rt = pattern_state[name]
+                            if rt["note_on"] is not None:
+                                port, ch = outputs[name]
+                                port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                rt["note_on"] = None
+                                rt["gate_left"] = 0.0
+                            continue
                         rt = pattern_state[name]
                         rt["tick"] += 1.0
                         if rt["tick"] + 1e-9 < cfg["pulses"]:

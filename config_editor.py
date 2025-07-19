@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
     QStyle,
     QSizePolicy,
+    QGraphicsOpacityEffect,
 )
 from dataclasses import dataclass, field
 
@@ -200,12 +201,36 @@ class PatternWidget(QGroupBox):
         self._name = name
         self._data = cfg  # reference maintained
         self._output_channel = midi_channel
+        # ------------------------------------------------------------------
+        # Enabled toggle (power icon)
+        # ------------------------------------------------------------------
+        self._enabled: bool = bool(cfg.get("enabled", True))
+
+        power_icon_path = Path(__file__).resolve().parent / "icons" / "ic_power.svg"
+        self.enable_btn = QToolButton()
+        self.enable_btn.setIcon(QIcon(str(power_icon_path)))
+        self.enable_btn.setCheckable(True)
+        self.enable_btn.setChecked(self._enabled)
+        # Subtle visual cue: dim icon when unchecked (disabled)
+        self.enable_btn.setStyleSheet(
+            "QToolButton { border: none; padding:0px; }\n"
+            "QToolButton:!checked { opacity: 0.3; }"
+        )
+        self.enable_btn.clicked.connect(self._on_enabled_toggled)  # type: ignore[arg-type]
+
+        # Apply opacity effect to whole widget
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._update_opacity()  # type: ignore[attr-defined]
 
         self.top_layout = QHBoxLayout()
 
         # Pattern name label on the left
         name_lbl = QLabel(name)
         name_lbl.setStyleSheet("font-weight: bold;")
+
+        # Add power button then name label
+        self.top_layout.addWidget(self.enable_btn)
         self.top_layout.addWidget(name_lbl)
 
         # Center section
@@ -248,7 +273,29 @@ class PatternWidget(QGroupBox):
 
         # adjust container width after adding widgets
         if hasattr(self, "grid_container"):
-            self.grid_container.adjustSize()
+            self.grid_container.setMinimumWidth(self.grid_container.sizeHint().width())
+
+    # ------------------------------------------------------------------
+    # Enabled helper & handler
+    # ------------------------------------------------------------------
+
+    def _on_enabled_toggled(self, checked: bool):
+        self._enabled = checked
+        self._update_opacity()  # type: ignore[attr-defined]
+        # Keep interactions possible even when disabled
+        self.setEnabled(True)
+
+    def is_enabled(self) -> bool:
+        return self._enabled
+
+    def _update_opacity(self) -> None:
+        """Adjust QGraphicsOpacityEffect according to enabled flag."""
+        if hasattr(self, "_opacity_effect"):
+            self._opacity_effect.setOpacity(1.0 if self._enabled else 0.5)
+        # also update button checked state to stay in sync (in case called externally)
+        if hasattr(self, "enable_btn"):
+            self.enable_btn.setChecked(self._enabled)
+        self.update()
 
     def _make_combo(self, options: List[str], current: str) -> QComboBox:
         box = QComboBox()
@@ -527,6 +574,7 @@ class PatternWidget(QGroupBox):
             "gate": gate,
             "oktawa": octave,
             "division": division,
+            "enabled": self._enabled,
         }
         return midi_ch, data
 
@@ -971,8 +1019,8 @@ class ConfigEditor(QMainWindow):
         self._update_preset_name()
 
     def randomize_all(self, checked: bool = False):  # noqa: F841
-        for name, pw in self.pattern_widgets.items():
-            if self.rand_settings.patterns_enabled.get(name, True):
+        for _name, pw in self.pattern_widgets.items():
+            if pw.is_enabled():
                 pw.randomize(self.rand_settings)
 
     def open_random_settings(self):
