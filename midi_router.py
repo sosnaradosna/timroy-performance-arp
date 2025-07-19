@@ -436,6 +436,7 @@ def main():
                         note = chord_notes[idx - 1]
                         # choose velocity for this step
                         vel_val = velocities[step_pos % len(velocities)] if velocities else 100
+                        vrand_val = vrands[step_pos % len(vrands)] if vrands else 0
                         # handle random velocity
                         if isinstance(vel_val, str) and vel_val.upper() == "R":
                             if len(rt["rand_vel"]) < len(velocities):
@@ -445,6 +446,19 @@ def main():
                             base_vel = rt["rand_vel"][step_pos]
                         else:
                             base_vel = int(vel_val)
+
+                        if base_vel is None:
+                            base_vel = 64
+
+                        # apply vrandom percentage to get final vel
+                        if vrand_val >= 100:
+                            vel = random.randint(1, 127)
+                        elif vrand_val > 0:
+                            span = int(vrand_val * 127 / 100)
+                            half = span // 2
+                            vel = random.randint(max(1, base_vel - half), min(127, base_vel + half))
+                        else:
+                            vel = base_vel
 
                         # gate handling
                         gate_val = gates[step_pos % len(gates)] if gates else 100
@@ -461,7 +475,7 @@ def main():
                             # Tie step: sustain or overlap
                             if rt["note_on"] is None:
                                 # Nothing playing, just start note
-                                port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
                                 rt["note_on"] = note
                             else:
                                 if rt["note_on"] != note:
@@ -469,7 +483,7 @@ def main():
                                     # overlap 1 tick: schedule previous note off after next tick
                                     rt["pending_off"] = rt["note_on"]
                                     rt["pending_left"] = 1.0
-                                    port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                    port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
                                     rt["note_on"] = note
                                 # same note: keep sustaining (no retrigger)
                             rt["gate_left"] = -1.0  # sustain until next non-tie gate
@@ -478,7 +492,7 @@ def main():
                             # Regular gate step
                             same_note = (rt["note_on"] == note)
                             if rt["note_on"] is None:
-                                port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
                                 rt["note_on"] = note
                             else:
                                 if same_note:
@@ -489,12 +503,12 @@ def main():
                                         # From tie: glide overlap with 1 tick
                                         rt["pending_off"] = rt["note_on"]
                                         rt["pending_left"] = 1.0
-                                        port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                        port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
                                         rt["note_on"] = note
                                     else:
                                         # normal retrigger
                                         port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
-                                        port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                        port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
                                     rt["note_on"] = note
 
                             gate_percent = int(gate_val) if not isinstance(gate_val, str) else 100
