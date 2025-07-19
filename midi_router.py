@@ -461,6 +461,16 @@ def main():
                         # advance step
                         rt["step"] = (rt["step"] + 1) % plen
 
+                    # -------- handle gate countdown & note_off ----------
+                    for pname, rt in pattern_state.items():
+                        if rt["note_on"] is not None and rt["gate_left"] > 0:
+                            rt["gate_left"] -= 1.0
+                            if rt["gate_left"] <= 0:
+                                port, ch = outputs[pname]
+                                port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                rt["note_on"] = None
+                                rt["gate_left"] = 0.0
+
                     continue  # handled clock
 
                 if msg.type == "start":
