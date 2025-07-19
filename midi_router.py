@@ -205,13 +205,16 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
         division_str = str(pconf.get("division", "1/16"))
         pulses_val = parse_division(division_str)
 
-        # ---------------- Gate list (1-100 %) ----------------
+        # ---------------- Gate list (1-100 %) or 'T' for tie ----------------
         gate_raw = pconf.get("gate", [])
         if not gate_raw:
             gate_list = [100] * length
         else:
-            gate_list: List[int] = []
+            gate_list: List[Any] = []  # may contain int or 'T'
             for v in gate_raw[:length]:
+                if isinstance(v, str) and v.upper() == "T":
+                    gate_list.append("T")
+                    continue
                 try:
                     g_val = int(v)
                 except (ValueError, TypeError):
@@ -296,6 +299,7 @@ def main():
             "rand_vel": [],
             "note_on": None,
             "gate_left": 0.0,
+            "tie_prev": False,
         }
 
     # -------------------------------------------------------------------
@@ -440,8 +444,9 @@ def main():
                         else:
                             base_vel = int(vel_val)
 
-                        # gate duration
-                        gate_percent = gates[step_pos % len(gates)] if gates else 100
+                        # gate handling
+                        gate_val = gates[step_pos % len(gates)] if gates else 100
+                        tie_flag = isinstance(gate_val, str) and str(gate_val).upper() == "T"
 
                         # apply octave shift (12 semitones per octave)
                         octave = int(cfg["octave"])
@@ -449,14 +454,46 @@ def main():
                         if not (0 <= note <= 127):
                             continue  # skip if out of MIDI range
                         port, ch = outputs[name]
-                        # if previous note still on, turn it off
-                        if rt["note_on"] is not None:
-                            port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                        # note-on/note-off logic with tie
+                        if tie_flag:
+                            # Tie step: sustain or overlap
+                            if rt["note_on"] is None:
+                                # Nothing playing, just start note
+                                port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                rt["note_on"] = note
+                            else:
+                                if rt["note_on"] != note:
+                                    # Different note – overlap for glide
+                                    port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                    port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                    rt["note_on"] = note
+                                # same note: keep sustaining (no retrigger)
+                            rt["gate_left"] = -1.0  # sustain until next non-tie gate
+                            rt["tie_prev"] = True
+                        else:
+                            # Regular gate step
+                            same_note = (rt["note_on"] == note)
+                            if rt["note_on"] is None:
+                                port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                rt["note_on"] = note
+                            else:
+                                if same_note:
+                                    # Note already held, just update gate length
+                                    pass
+                                else:
+                                    if rt["tie_prev"]:
+                                        # From tie: glide overlap
+                                        port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                        port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                    else:
+                                        # normal retrigger
+                                        port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                        port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
+                                    rt["note_on"] = note
 
-                        port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
-                        last_played[name] = note
-                        rt["note_on"] = note
-                        rt["gate_left"] = cfg["pulses"] * gate_percent / 100.0
+                            gate_percent = int(gate_val) if not isinstance(gate_val, str) else 100
+                            rt["gate_left"] = cfg["pulses"] * gate_percent / 100.0
+                            rt["tie_prev"] = False
 
                         # advance step
                         rt["step"] = (rt["step"] + 1) % plen
@@ -470,6 +507,7 @@ def main():
                                 port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
                                 rt["note_on"] = None
                                 rt["gate_left"] = 0.0
+                        # if gate_left == -1 (tie) keep sustaining
 
                     continue  # handled clock
 
@@ -554,4 +592,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main() 
     main() 
