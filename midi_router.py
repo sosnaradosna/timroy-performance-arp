@@ -1,37 +1,110 @@
 #!/usr/bin/env python3
-"""Midi Router
-Routes incoming MIDI messages from one channel to two separate output channels
-named "Pattern 1" and "Pattern 2" (or as configured in config.json).
+"""TR MIDI Router & Arpeggiator
+
+* Listens on a virtual input "TR Router In" (default channel defined in
+  ``config.json`` – channel **1** if omitted).
+* Captures up to 8 simultaneously-held notes (chord) on the input channel.
+  Notes are stored from lowest to highest and indexed **1…8**.
+* Generates two arpeggio streams clock-synchronised to incoming MIDI clock
+  (24 PPQN):
+    • Pattern 1  → ascending 1 → 8 → …  (output channel configured as "Pattern 1")
+    • Pattern 2  → descending 8 → 1 → … (output channel configured as "Pattern 2")
+* Arpeggiator uruchamia się automatycznie, gdy tylko co najmniej jedna nuta
+  akordu jest przytrzymana i docierają impulsy MIDI Clock (24 PPQN).
+  Nie wymaga komunikatów Start/Stop – choć nadal je obsługuje do opcjonalnego
+  resetu transportu.
+
+Requires: ``mido`` + a backend such as ``python-rtmidi`` (declared in
+``requirements.txt``).
 """
+
 import json
-import sys
 from pathlib import Path
+from typing import List, Dict, Optional, Tuple
 
 import mido
+import os, signal, time
+LOCK_PATH = Path.home() / ".tr_router.lock"
+
+# ---------------------------------------------------------------------------
+# Single-instance enforcement
+# ---------------------------------------------------------------------------
+
+def ensure_single_instance():
+    """Terminate previous running instance (if any) and create a lock file."""
+    if LOCK_PATH.exists():
+        try:
+            old_pid = int(LOCK_PATH.read_text())
+            if old_pid != os.getpid():
+                # Check if process is alive
+                try:
+                    os.kill(old_pid, 0)
+                except ProcessLookupError:
+                    pass  # not running
+                else:
+                    print(f"Found previous instance (PID {old_pid}), terminating…")
+                    try:
+                        os.kill(old_pid, signal.SIGTERM)
+                    except PermissionError:
+                        print("  Warning: insufficient permission to terminate old process.")
+                    # Wait a bit for graceful shutdown
+                    for _ in range(10):
+                        time.sleep(0.3)
+                        try:
+                            os.kill(old_pid, 0)
+                        except ProcessLookupError:
+                            break
+                    else:
+                        # force kill
+                        try:
+                            os.kill(old_pid, signal.SIGKILL)
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"Error handling existing lock file: {e}")
+        # always remove stale lock
+        try:
+            LOCK_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # Create new lock with current pid
+    try:
+        LOCK_PATH.write_text(str(os.getpid()))
+    except Exception as e:
+        print(f"Warning: could not create lock file: {e}")
+
+
+def cleanup_lock():
+    try:
+        if LOCK_PATH.exists():
+            if LOCK_PATH.read_text().strip() == str(os.getpid()):
+                LOCK_PATH.unlink()
+    except Exception:
+        pass
+
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
-FORWARD_TYPES = {
-    "note_on",
-    "note_off",
-    "control_change",
-    "program_change",
-    "pitchwheel",
-    "aftertouch",
-    "polytouch",
-}
+PPQN = 24                     # MIDI clock pulses per quarter note
+TICKS_PER_STEP = PPQN // 4    # 16-th note → 6 pulses
+MAX_NOTES = 8                 # maximum chord size
 
-def load_config():
+
+def load_config() -> Tuple[int, Dict[str, int]]:
+    """Read ``config.json`` and return (input_channel, output_mapping)."""
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Config file not found at {CONFIG_PATH}")
-    with CONFIG_PATH.open() as fp:
-        data = json.load(fp)
-    in_ch = int(data.get("input_channel", 1)) - 1
+
+    data = json.loads(CONFIG_PATH.read_text())
+    in_ch = int(data.get("input_channel", 1)) - 1  # convert to 0-based
     out_map = {name: int(ch) - 1 for name, ch in data.get("output_channels", {}).items()}
     if not out_map:
         raise ValueError("No output_channels defined in config.json")
     return in_ch, out_map
 
-def create_output_ports(out_map):
+
+def create_output_ports(out_map: Dict[str, int]):
+    """Return dict {name: (mido.Output, channel)} for each pattern output."""
     ports = {}
     for name, ch in out_map.items():
         port = mido.open_output(name, virtual=True)  # type: ignore[attr-defined]
@@ -39,36 +112,164 @@ def create_output_ports(out_map):
         print(f"Opened virtual output '{name}' on channel {ch + 1}")
     return ports
 
-def pick_input_port():
-    ins = mido.get_input_names()  # type: ignore[attr-defined]
-    if not ins:
-        raise RuntimeError("No MIDI input ports found.")
-    for name in ins:
-        if "through" not in name.lower() and "virtual" not in name.lower():
-            return name
-    return ins[0]
+
+# ---------------------------------------------------------------------------
+# Runtime helpers
+# ---------------------------------------------------------------------------
+
+def add_note(chord: List[int], note: int):
+    """Insert *note* into *chord* keeping ascending order and size ≤ MAX_NOTES."""
+    if note in chord:
+        return
+    chord.append(note)
+    chord.sort()
+    if len(chord) > MAX_NOTES:
+        # Keep the *lowest* MAX_NOTES notes (spec: ignore extra >8)
+        del chord[MAX_NOTES:]
+
+
+def remove_note(chord: List[int], note: int):
+    """Remove note from chord list if present."""
+    try:
+        chord.remove(note)
+    except ValueError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
 
 def main():
+    ensure_single_instance()
     in_channel, out_map = load_config()
     outputs = create_output_ports(out_map)
 
-    # Create a dedicated virtual input port so that the DAW can route MIDI
-    input_name = "TR Router In"
-    print(f"Creating virtual input '{input_name}' listening on channel {in_channel + 1}")
+    # Map pattern names → behaviour functions
+    pattern_order = {
+        "Pattern 1": lambda idx, ln: idx,                   # ascending 1→8
+        "Pattern 2": lambda idx, ln: ln - 1 - idx           # descending 8→1
+    }
 
-    # Open the virtual input port (other applications / DAWs can now send to it)
+    # Runtime state
+    chord_notes: List[int] = []             # current chord (sorted)
+    # Arp is considered "armed" whenever `chord_notes` is non-empty.
+    tick_counter = 0                        # MIDI clock ticks since start
+    step_index = 0                          # 16-th step counter
+    last_played: Dict[str, Optional[int]] = {name: None for name in outputs}
+
+    input_name = "TR Router In"
+    print(
+        f"Creating virtual input '{input_name}' listening on MIDI channel {in_channel + 1}\n"
+        f"• Send START/STOP and CLOCK from your DAW to this port to drive the arpeggiator.\n"
+        f"• Play chords (≤8 notes) on the same channel to generate arpeggios."
+    )
+
     with mido.open_input(input_name, virtual=True) as in_port:  # type: ignore[attr-defined]
         try:
             for msg in in_port:
-                if msg.type not in FORWARD_TYPES or msg.channel != in_channel:
+                # ----------------------------- Clock & transport handling ----
+                if msg.type == "clock":
+                    if not chord_notes:
+                        # no notes held – ensure any lingering notes are off
+                        for name, last in last_played.items():
+                            if last is not None:
+                                port, ch = outputs[name]
+                                port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
+                                last_played[name] = None
+                        continue  # nothing to arpeggiate
+
+                    tick_counter += 1
+                    if tick_counter % TICKS_PER_STEP != 0:
+                        continue  # wait until next 16-th note
+
+                    if not chord_notes:
+                        continue  # nothing to play
+
+                    # send note-offs for previous step
+                    for name, last in last_played.items():
+                        if last is not None:
+                            port, ch = outputs[name]
+                            port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
+                            last_played[name] = None
+
+                    ln = len(chord_notes)
+                    if ln == 0:
+                        continue
+
+                    # determine notes for each pattern and send note-ons
+                    for name, order_fn in pattern_order.items():
+                        idx = order_fn(step_index % ln, ln)
+                        note = chord_notes[idx]
+                        port, ch = outputs[name]
+                        port.send(mido.Message("note_on", note=note, velocity=100, channel=ch))
+                        last_played[name] = note
+
+                    step_index += 1
+                    continue  # handled clock
+
+                if msg.type == "start":
+                    tick_counter = 0
+                    step_index = 0
+                    print("[Transport] START message received – counter reset (optional)")
+                    # don't change behaviour
                     continue
-                for port, ch in outputs.values():
-                    port.send(msg.copy(channel=ch))
+
+                if msg.type == "stop":
+                    # Stop only resets counters and shuts off notes; arp will re-arm automatically when notes are held.
+                    for name, last in last_played.items():
+                        if last is not None:
+                            port, ch = outputs[name]
+                            port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
+                            last_played[name] = None
+                    tick_counter = 0
+                    step_index = 0
+                    print("[Transport] STOP message received – counters cleared")
+                    continue
+
+                # ----------------------------- Note handling ----------------
+                if msg.type in ("note_on", "note_off") and msg.channel == in_channel:
+                    prev_len = len(chord_notes)
+                    note = msg.note
+                    if msg.type == "note_on" and msg.velocity > 0:
+                        add_note(chord_notes, note)
+                    else:  # note_off OR note_on with velocity 0
+                        remove_note(chord_notes, note)
+
+                    new_len = len(chord_notes)
+
+                    # When chord becomes empty → stop all currently sounding notes
+                    if new_len == 0 and prev_len > 0:
+                        for name, last in last_played.items():
+                            if last is not None:
+                                port, ch = outputs[name]
+                                port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
+                                last_played[name] = None
+                        step_index = 0  # reset for next chord
+                        continue
+
+                    # When chord starts (was empty) → reset sequence to start on index 0
+                    if prev_len == 0 and new_len > 0:
+                        step_index = 0
+
+                    # If chord size changed but not empty, keep current step_index so arpeggio continues seamlessly.
+                    continue
+
+                # We ignore all other message types.
+
         except KeyboardInterrupt:
             print("Stopping router…")
         finally:
+            cleanup_lock()
+            # make sure we send note_off on exit
+            for name, last in last_played.items():
+                if last is not None:
+                    port, ch = outputs[name]
+                    port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
             for port, _ in outputs.values():
                 port.close()
+
 
 if __name__ == "__main__":
     main() 
