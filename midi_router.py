@@ -25,7 +25,15 @@ from typing import List, Dict, Optional, Tuple, Any
 import mido
 import random
 import os, signal, time
+
+# Lock file location (used for single instance + external control)
 LOCK_PATH = Path.home() / ".tr_router.lock"
+
+# ---------------------------------------------------------------------------
+# Live-reload support via SIGUSR1
+# ---------------------------------------------------------------------------
+
+RELOAD_SIGNAL = signal.SIGUSR1 if hasattr(signal, "SIGUSR1") else signal.SIGHUP
 
 # ---------------------------------------------------------------------------
 # Single-instance enforcement
@@ -279,6 +287,18 @@ def main():
     in_channel, out_map, pattern_cfgs = load_config()
     outputs = create_output_ports(out_map)
 
+    # Live-reload flag set by signal handler
+    reload_requested = False
+
+    def _handle_reload(signum, frame):  # type: ignore[unused-arg]
+        nonlocal reload_requested
+        reload_requested = True
+
+    try:
+        signal.signal(RELOAD_SIGNAL, _handle_reload)
+    except Exception as e:
+        print(f"Warning: cannot set reload signal handler: {e}")
+
     # Map pattern names → behaviour functions
     pattern_order = {
         "Pattern 1": lambda idx, ln: idx,                   # ascending 1→8
@@ -383,6 +403,23 @@ def main():
     with mido.open_input(input_name, virtual=True) as in_port:  # type: ignore[attr-defined]
         try:
             for msg in in_port:
+                # -------------------------------------------------- reload --
+                if reload_requested:
+                    reload_requested = False
+                    try:
+                        _in, _out, new_cfgs = load_config()
+                        pattern_cfgs = new_cfgs  # type: ignore[assignment]
+                        print("Configuration reloaded from config.json")
+                        # reset pattern runtime to avoid mismatches
+                        for name in pattern_state:
+                            pattern_state[name].update({
+                                "tick": 0.0,
+                                "step": 0,
+                                "rand": [],
+                                "rand_vel": [],
+                            })
+                    except Exception as err:
+                        print(f"Failed to reload configuration: {err}")
                 # ----------------------------- Clock & transport handling ----
                 if msg.type == "clock":
                     if not chord_notes:

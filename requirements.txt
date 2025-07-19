@@ -1,2 +1,3 @@
 mido==1.3.2
 python-rtmidi==1.5.8 
+PyQt6==6.5.0 
