@@ -3,5 +3,17 @@
   "output_channels": {
     "Pattern 1": 2,
     "Pattern 2": 3
+  },
+  "patterns": {
+    "Pattern 1": {
+      "length": 4,
+      "steps": [1,2,3,4],
+      "oktawa": 1    // +1 oktawa
+    },
+    "Pattern 2": {
+      "length": 3,
+      "steps": [2,2,1],
+      "oktawa": 0   // -1 oktawa
+    }
   }
 } 
