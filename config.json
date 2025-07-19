@@ -1,0 +1,7 @@
+{
+  "input_channel": 1,
+  "output_channels": {
+    "Pattern 1": 2,
+    "Pattern 2": 3
+  }
+} 
