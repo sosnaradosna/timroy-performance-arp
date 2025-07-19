@@ -133,13 +133,32 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
         length = int(pconf.get("length", len(pconf.get("steps", []))))
         steps_list = pconf.get("steps", [])[:16]
         octave_shift = int(pconf.get("oktawa", 0))  # -2..2
+        velocity_list_raw = pconf.get("velocity", pconf.get("velocities", []))
         if not steps_list:
             steps_list = default_pattern(pname)["steps"]
             length = len(steps_list)
+        # Prepare velocity list
+        if not velocity_list_raw:
+            velocity_list = [100] * length
+        else:
+            velocity_list = []
+            for v in velocity_list_raw[:length]:
+                if isinstance(v, str) and v.upper() == "R":
+                    velocity_list.append("R")
+                else:
+                    try:
+                        num = int(v)
+                    except ValueError:
+                        num = 100
+                    velocity_list.append(max(1, min(127, num)))
+            if len(velocity_list) < length:
+                velocity_list += [100] * (length - len(velocity_list))
+
         patterns_cfg[pname] = {
             "length": max(1, min(16, length)),
             "steps": steps_list,
-            "octave": max(-5, min(5, octave_shift))  # clamp defensively
+            "octave": max(-5, min(5, octave_shift)),  # clamp defensively
+            "velocity": velocity_list,
         }
 
     return in_ch, out_map, patterns_cfg
@@ -201,7 +220,9 @@ def main():
     step_index = 0                          # 16-th step counter
     last_played: Dict[str, Optional[int]] = {name: None for name in outputs}
     # store per-pattern random indices for 'R' steps
-    pattern_state: Dict[str, Dict[str, List[Optional[int]]]] = {name: {"rand": []} for name in outputs}
+    pattern_state: Dict[str, Dict[str, List[Optional[int]]]] = {
+        name: {"rand": [], "rand_vel": []} for name in outputs
+    }
 
     input_name = "TR Router In"
     print(
@@ -246,12 +267,14 @@ def main():
                     for name, cfg in pattern_cfgs.items():
                         plen = cfg.get("length", 0) or 0
                         steps = cfg.get("steps", [])
+                        velocities = cfg.get("velocity", [100]*plen)
                         if plen == 0 or not steps:
                             continue
                         step_pos = step_index % plen
                         # Reset random cache at start of cycle
                         if step_pos == 0:
                             pattern_state[name]["rand"] = [None] * len(steps)
+                            pattern_state[name]["rand_vel"] = [None] * len(velocities)
 
                         step_val = steps[step_pos]
 
@@ -270,13 +293,25 @@ def main():
                             # index out of current chord range → silent step
                             continue
                         note = chord_notes[idx - 1]
+                        # choose velocity for this step
+                        vel_val = velocities[step_pos % len(velocities)] if velocities else 100
+                        # handle random velocity
+                        if isinstance(vel_val, str) and vel_val.upper() == "R":
+                            if len(pattern_state[name]["rand_vel"]) < len(velocities):
+                                pattern_state[name]["rand_vel"] += [None]*(len(velocities)-len(pattern_state[name]["rand_vel"]))
+                            if pattern_state[name]["rand_vel"][step_pos] is None:
+                                pattern_state[name]["rand_vel"][step_pos] = random.randint(1, 127)
+                            vel = pattern_state[name]["rand_vel"][step_pos]
+                        else:
+                            vel = int(vel_val)
+
                         # apply octave shift (12 semitones per octave)
                         octave = int(cfg.get("octave", 0))
                         note += octave * 12
                         if not (0 <= note <= 127):
                             continue  # skip if out of MIDI range
                         port, ch = outputs[name]
-                        port.send(mido.Message("note_on", note=note, velocity=100, channel=ch))
+                        port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
                         last_played[name] = note
 
                     step_index += 1
