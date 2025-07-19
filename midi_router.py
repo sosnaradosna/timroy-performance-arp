@@ -20,7 +20,7 @@ Requires: ``mido`` + a backend such as ``python-rtmidi`` (declared in
 
 import json
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 
 import mido
 import os, signal, time
@@ -90,17 +90,53 @@ TICKS_PER_STEP = PPQN // 4    # 16-th note → 6 pulses
 MAX_NOTES = 8                 # maximum chord size
 
 
-def load_config() -> Tuple[int, Dict[str, int]]:
-    """Read ``config.json`` and return (input_channel, output_mapping)."""
+def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
+    """Read ``config.json`` and return (input_channel, output_mapping, patterns_cfg)."""
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Config file not found at {CONFIG_PATH}")
 
-    data = json.loads(CONFIG_PATH.read_text())
+    raw = CONFIG_PATH.read_text()
+    # Allow "//" style comments in JSON for convenience.
+    filtered_lines = []
+    for line in raw.splitlines():
+        # Remove everything after // but keep http:// etc. by checking for quotes
+        if "//" in line:
+            parts = line.split("//", 1)
+            before = parts[0]
+            # if // occurs inside quotes, keep it
+            if before.count("\"") % 2 == 0:
+                line = before
+        filtered_lines.append(line)
+    data = json.loads("\n".join(filtered_lines))
     in_ch = int(data.get("input_channel", 1)) - 1  # convert to 0-based
     out_map = {name: int(ch) - 1 for name, ch in data.get("output_channels", {}).items()}
     if not out_map:
         raise ValueError("No output_channels defined in config.json")
-    return in_ch, out_map
+
+    # pattern definitions: { "Pattern 1": {"length": 16, "steps": [...]} }
+    patterns_raw = data.get("patterns", {})
+
+    def default_pattern(name: str):
+        # Fallback: ascending for Pattern 1, descending for Pattern 2
+        if "1" in name:
+            steps = list(range(1, 9))
+        else:
+            steps = list(range(8, 0, -1))
+        return {"length": len(steps), "steps": steps}
+
+    patterns_cfg: Dict[str, Dict[str, Any]] = {}
+    for pname in out_map.keys():
+        pconf = patterns_raw.get(pname) or patterns_raw.get(pname.lower().replace(" ", ""))
+        if not pconf:
+            pconf = default_pattern(pname)
+        length = int(pconf.get("length", len(pconf.get("steps", []))))
+        steps_list = pconf.get("steps", [])[:16]
+        if not steps_list:
+            steps_list = default_pattern(pname)["steps"]
+            length = len(steps_list)
+        patterns_cfg[pname] = {"length": max(1, min(16, length)), "steps": steps_list}
+
+    return in_ch, out_map, patterns_cfg
 
 
 def create_output_ports(out_map: Dict[str, int]):
@@ -143,7 +179,7 @@ def remove_note(chord: List[int], note: int):
 
 def main():
     ensure_single_instance()
-    in_channel, out_map = load_config()
+    in_channel, out_map, pattern_cfgs = load_config()
     outputs = create_output_ports(out_map)
 
     # Map pattern names → behaviour functions
@@ -198,10 +234,21 @@ def main():
                     if ln == 0:
                         continue
 
-                    # determine notes for each pattern and send note-ons
-                    for name, order_fn in pattern_order.items():
-                        idx = order_fn(step_index % ln, ln)
-                        note = chord_notes[idx]
+                    # determine notes for each pattern and send note-ons based on config
+                    for name, cfg in pattern_cfgs.items():
+                        plen = cfg.get("length", 0) or 0
+                        steps = cfg.get("steps", [])
+                        if plen == 0 or not steps:
+                            continue
+                        step_pos = step_index % plen
+                        # guard index range
+                        if step_pos >= len(steps):
+                            continue
+                        idx = steps[step_pos]
+                        if not (1 <= idx <= ln):
+                            # index out of current chord range → silent step
+                            continue
+                        note = chord_notes[idx - 1]
                         port, ch = outputs[name]
                         port.send(mido.Message("note_on", note=note, velocity=100, channel=ch))
                         last_played[name] = note
