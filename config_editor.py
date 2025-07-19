@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional, Union
 import os, signal
 
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QSize
 from PyQt6.QtGui import QIntValidator, QAction
 from PyQt6.QtWidgets import (
     QApplication,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QStyle,
+    QSizePolicy,
 )
 from dataclasses import dataclass, field
 
@@ -221,6 +222,7 @@ class PatternWidget(QGroupBox):
         grid_container.setLayout(self.grid)
         grid_scroll = QScrollArea()
         grid_scroll.setWidgetResizable(True)
+        grid_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         grid_scroll.setWidget(grid_container)
 
         main_layout = QVBoxLayout()
@@ -230,6 +232,7 @@ class PatternWidget(QGroupBox):
 
         self._build_grid()
         self.length_combo.currentTextChanged.connect(self._build_grid)  # type: ignore[arg-type]
+
 
     def _make_combo(self, options: List[str], current: str) -> QComboBox:
         box = QComboBox()
@@ -581,7 +584,7 @@ class ConfigEditor(QMainWindow):
     def _build_menu(self):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
-        save_act = QAction("Save", self)
+        save_act = QAction("Send", self)
         save_act.triggered.connect(self.save_current)
         save_as_act = QAction("Save As…", self)
         save_as_act.triggered.connect(self.save_as)
@@ -591,6 +594,7 @@ class ConfigEditor(QMainWindow):
         quit_act.triggered.connect(self.close)
 
         file_menu.addAction(open_act)
+        # Keep "Send" in menu as well (optional)
         file_menu.addAction(save_act)
         file_menu.addAction(save_as_act)
         file_menu.addSeparator()
@@ -660,7 +664,7 @@ class ConfigEditor(QMainWindow):
         data = self._collect_config()
         try:
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
-            QMessageBox.information(self, "Saved", f"Saved to {CONFIG_PATH}")
+            # Silent save – no confirmation dialog
             self._notify_router()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
@@ -698,15 +702,37 @@ class ConfigEditor(QMainWindow):
             pass
 
     def _build_toolbar(self):
-        toolbar = QToolBar("Tools", self)
-        self.addToolBar(toolbar)
-        rand_act = toolbar.addAction("Global Random")
-        rand_act.triggered.connect(self.randomize_all)  # type: ignore[arg-type]
+        toolbar = QToolBar("TopBar", self)
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(24, 24))
+        toolbar.setFixedHeight(60)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
-        settings_btn = QToolButton()
-        settings_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
-        settings_btn.clicked.connect(self.open_random_settings)  # type: ignore[arg-type]
-        toolbar.addWidget(settings_btn)
+        # --- Global Random button (left) ---
+        btn_random = QPushButton("Global Random")
+        btn_random.setMinimumHeight(40)
+        btn_random.clicked.connect(self.randomize_all)  # type: ignore[arg-type]
+        toolbar.addWidget(btn_random)
+
+        # Settings (gear) button next to random
+        btn_settings = QToolButton()
+        btn_settings.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
+        btn_settings.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        btn_settings.setAutoRaise(True)
+        btn_settings.setMinimumSize(QSize(40, 40))
+        btn_settings.clicked.connect(self.open_random_settings)  # type: ignore[arg-type]
+        toolbar.addWidget(btn_settings)
+
+        # spacer expands pushing following widgets to right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+
+        # Send button on the far right
+        btn_send = QPushButton("Send")
+        btn_send.setMinimumHeight(40)
+        btn_send.clicked.connect(self.save_current)  # type: ignore[arg-type]
+        toolbar.addWidget(btn_send)
 
     def randomize_all(self, checked: bool = False):  # noqa: F841
         for name, pw in self.pattern_widgets.items():
