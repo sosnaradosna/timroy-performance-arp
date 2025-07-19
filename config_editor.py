@@ -516,6 +516,10 @@ class PatternWidget(QGroupBox):
                 spin.setText(str(int(val)))
             self.grid.addWidget(spin, 7, col + 1)
 
+        # Dodaj elastyczną pustą kolumnę, aby wiersze kroków zawsze były
+        # wyrównane do lewej, a wolne miejsce „rozpychało się” na prawo.
+        self.grid.setColumnStretch(length + 1, 1)
+
     # --------------------------------- export --------------------------------
 
     def export_data(self) -> Tuple[int, Dict[str, Any]]:
