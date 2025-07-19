@@ -540,7 +540,7 @@
     "velocity": 50,
     "vrandom": 50,
     "sprob": 50,
-    "roct": 50,
+    "roct": 25,
     "gate": 50,
     "patterns_enabled": {
       "Pattern 1": true,

@@ -572,11 +572,52 @@ class PatternWidget(QGroupBox):
             box: QComboBox = self.grid.itemAtPosition(5, col + 1).widget()  # type: ignore[assignment]
             if random.randint(1, 100) <= settings.sprob: # Assuming sprob controls s-oct randomization
                 box.setCurrentIndex(random.randrange(box.count()))
-        # r-oct row
+        # r-oct row – custom logic
+        OCT_OPTIONS = ["0", "+1", "+2", "-1", "-2", "+-1", "+-2"]
+
+        def _small_variants(cur: str) -> List[str]:
+            """Return a list of allowed small-change variants for given current value."""
+            if cur == "0":
+                return ["0", "+1", "+-1"]
+            if cur == "+1":
+                return ["0", "+1", "+2"]
+            if cur == "-1":
+                return ["0", "-1", "-2"]
+            if cur == "+2":
+                return ["+1", "+2"]
+            if cur == "-2":
+                return ["-1", "-2"]
+            if cur == "+-1":
+                return ["0", "+-1", "+1", "-1"]
+            if cur == "+-2":
+                return ["+-2", "+2", "-2", "+1", "-1"]
+            # fallback – all options
+            return OCT_OPTIONS
+
         for col in range(length):
             box: QComboBox = self.grid.itemAtPosition(6, col + 1).widget()  # type: ignore[assignment]
-            if random.randint(1, 100) <= settings.roct:
-                box.setCurrentIndex(random.randrange(box.count()))
+            roct_setting = settings.roct
+            if roct_setting == 0:
+                continue  # no changes
+
+            # Determine probability (1-50%)
+            if roct_setting <= 50:
+                prob = roct_setting
+            else:
+                prob = roct_setting - 50
+
+            if random.randint(1, 100) > prob:
+                continue  # skip change
+
+            current_txt = box.currentText()
+
+            if roct_setting <= 50:
+                # Small variant change
+                choices = _small_variants(current_txt)
+                box.setCurrentText(random.choice(choices))
+            else:
+                # Large variant change – pick any option
+                box.setCurrentText(random.choice(OCT_OPTIONS))
         # Gate row
         for col in range(length):
             spin: GateSpinBox = self.grid.itemAtPosition(7, col + 1).widget()  # type: ignore
