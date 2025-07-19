@@ -229,26 +229,25 @@ class PatternWidget(QGroupBox):
         self.top_layout.addWidget(self.channel_combo)
 
         self.grid = QGridLayout()
-        self.grid.setHorizontalSpacing(4)
+        self.grid.setHorizontalSpacing(8)
         self.grid.setVerticalSpacing(4)
-        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setContentsMargins(8, 0, 0, 0)
 
-        grid_container = QWidget()
-        grid_container.setLayout(self.grid)
-        grid_container.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-        grid_scroll = QScrollArea()
-        grid_scroll.setWidgetResizable(True)
-        grid_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        grid_scroll.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        grid_scroll.setWidget(grid_container)
+        self.grid_container = QWidget()
+        self.grid_container.setLayout(self.grid)
+        self.grid_container.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
 
         main_layout = QVBoxLayout()
         main_layout.addLayout(self.top_layout)
-        main_layout.addWidget(grid_scroll)
+        main_layout.addWidget(self.grid_container)
         self.setLayout(main_layout)
 
         self._build_grid()
         self.length_combo.currentTextChanged.connect(self._build_grid)  # type: ignore[arg-type]
+
+        # adjust container width after adding widgets
+        if hasattr(self, "grid_container"):
+            self.grid_container.adjustSize()
 
 
     def _make_combo(self, options: List[str], current: str) -> QComboBox:
