@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Tuple, Optional, Union
 import os, signal
 
 from PyQt6.QtCore import Qt, QPoint, QSize
-from PyQt6.QtGui import QIntValidator, QAction
+from PyQt6.QtGui import QIntValidator, QAction, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -33,6 +33,8 @@ from PyQt6.QtWidgets import (
 from dataclasses import dataclass, field
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
+PRESET_DIR = (Path(__file__).resolve().parent / "presets")
+PRESET_DIR.mkdir(exist_ok=True)
 LOCK_PATH = Path.home() / ".tr_router.lock"
 RELOAD_SIGNAL = signal.SIGUSR1 if hasattr(signal, "SIGUSR1") else signal.SIGHUP
 
@@ -637,6 +639,9 @@ class ConfigEditor(QMainWindow):
         vbox.addWidget(scroll)
         self.setCentralWidget(central)
 
+        # Remember current path
+        self._current_path = path
+
         # Create pattern widgets
         for pname, midi_ch in self._output_channels.items():
             pcfg = patterns.get(pname, {})
@@ -644,6 +649,10 @@ class ConfigEditor(QMainWindow):
             inner_layout.addWidget(pw)
             self.pattern_widgets[pname] = pw
         inner_layout.addStretch()
+
+        # Update preset name display if toolbar already built
+        if hasattr(self, "preset_name_edit"):
+            self._update_preset_name()
 
     # ------------------------------ actions --------------------------------
 
@@ -670,7 +679,7 @@ class ConfigEditor(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
     def save_as(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save preset", str(CONFIG_PATH.parent), "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save preset", str(PRESET_DIR), "JSON (*.json)")
         if not path:
             return
         data = self._collect_config()
@@ -681,7 +690,7 @@ class ConfigEditor(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
     def open_preset(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open preset", str(CONFIG_PATH.parent), "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Open preset", str(PRESET_DIR), "JSON (*.json)")
         if not path:
             return
         # Clear current UI and reload
@@ -708,17 +717,21 @@ class ConfigEditor(QMainWindow):
         toolbar.setFixedHeight(60)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
+        # Left padding
+        left_pad = QWidget()
+        left_pad.setFixedWidth(20)
+        toolbar.addWidget(left_pad)
+
         # --- Global Random button (left) ---
         btn_random = QPushButton("Global Random")
         btn_random.setMinimumHeight(40)
         btn_random.clicked.connect(self.randomize_all)  # type: ignore[arg-type]
         toolbar.addWidget(btn_random)
 
-        # Settings (gear) button next to random
-        btn_settings = QToolButton()
-        btn_settings.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
-        btn_settings.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_settings.setAutoRaise(True)
+        # Settings (gear) button next to random, uses custom SVG icon
+        icon_path = (Path(__file__).resolve().parent / "icons" / "ic_settings.svg")
+        btn_settings = QPushButton()
+        btn_settings.setIcon(QIcon(str(icon_path)))
         btn_settings.setMinimumSize(QSize(40, 40))
         btn_settings.clicked.connect(self.open_random_settings)  # type: ignore[arg-type]
         toolbar.addWidget(btn_settings)
@@ -728,11 +741,48 @@ class ConfigEditor(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
+        # Preset name field (read-only)
+        self.preset_name_edit = QLineEdit("New preset")
+        self.preset_name_edit.setReadOnly(True)
+        self.preset_name_edit.setFixedWidth(200)
+        self.preset_name_edit.setFixedHeight(40)
+        self.preset_name_edit.setStyleSheet("QLineEdit { padding-left: 8px; }")
+        toolbar.addWidget(self.preset_name_edit)
+
+        # Open preset icon button
+        open_icon = QIcon(str((Path(__file__).resolve().parent / "icons" / "ic_open.svg")))
+        btn_open = QPushButton()
+        btn_open.setIcon(open_icon)
+        btn_open.setMinimumSize(QSize(40, 40))
+        btn_open.clicked.connect(self.open_preset)  # type: ignore[arg-type]
+        toolbar.addWidget(btn_open)
+
+        # Save As icon button
+        saveas_icon = QIcon(str((Path(__file__).resolve().parent / "icons" / "ic_save.svg")))
+        btn_saveas = QPushButton()
+        btn_saveas.setIcon(saveas_icon)
+        btn_saveas.setMinimumSize(QSize(40, 40))
+        btn_saveas.clicked.connect(self.save_as)  # type: ignore[arg-type]
+        toolbar.addWidget(btn_saveas)
+
+        # Spacer to push Send to far right (centering preset block)
+        spacer_center_right = QWidget()
+        spacer_center_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer_center_right)
+
         # Send button on the far right
         btn_send = QPushButton("Send")
         btn_send.setMinimumHeight(40)
         btn_send.clicked.connect(self.save_current)  # type: ignore[arg-type]
         toolbar.addWidget(btn_send)
+
+        # Right padding
+        right_pad = QWidget()
+        right_pad.setFixedWidth(20)
+        toolbar.addWidget(right_pad)
+
+        # initialise preset name
+        self._update_preset_name()
 
     def randomize_all(self, checked: bool = False):  # noqa: F841
         for name, pw in self.pattern_widgets.items():
@@ -742,6 +792,20 @@ class ConfigEditor(QMainWindow):
     def open_random_settings(self):
         dlg = RandomSettingsDialog(self.rand_settings, list(self.pattern_widgets.keys()), self)
         dlg.exec()
+
+    # --------------------------- preset name helper ------------------------
+
+    def _update_preset_name(self):
+        """Update read-only line edit with current preset file name."""
+        if hasattr(self, "preset_name_edit"):
+            try:
+                preset_path: Path = Path(getattr(self, "_current_path", CONFIG_PATH))
+                if preset_path.resolve() == CONFIG_PATH.resolve():
+                    self.preset_name_edit.setText("New preset")
+                else:
+                    self.preset_name_edit.setText(preset_path.stem)
+            except Exception:
+                self.preset_name_edit.setText("New preset")
 
 
 # ---------------------------------------------------------------------------
