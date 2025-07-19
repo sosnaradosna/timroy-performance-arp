@@ -90,6 +90,36 @@ PPQN = 24                     # MIDI clock pulses per quarter note
 TICKS_PER_STEP = PPQN // 4    # 16-th note → 6 pulses
 MAX_NOTES = 8                 # maximum chord size
 
+# ---------------------------------------------------------------------------
+# Rhythm division helpers
+# ---------------------------------------------------------------------------
+
+DIVISION_BASE = {
+    "1": 4 * PPQN,   # whole note
+    "1/2": 2 * PPQN, # half
+    "1/4": PPQN,     # quarter
+    "1/8": PPQN // 2,
+    "1/16": PPQN // 4,
+    "1/32": PPQN // 8,
+}
+
+
+def parse_division(s: str) -> int:
+    """Convert division string like '1/8', '1/4d', '1/16t' into pulses per step."""
+    s = s.strip().lower()
+    dotted = s.endswith("d")
+    triplet = s.endswith("t")
+    if dotted or triplet:
+        s_base = s[:-1]
+    else:
+        s_base = s
+    pulses = DIVISION_BASE.get(s_base, PPQN // 4)  # default 1/16
+    if dotted:
+        pulses = int(pulses * 1.5)
+    elif triplet:
+        pulses = int(pulses * 2 / 3)
+    return max(1, pulses)
+
 
 def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
     """Read ``config.json`` and return (input_channel, output_mapping, patterns_cfg)."""
@@ -154,11 +184,31 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             if len(velocity_list) < length:
                 velocity_list += [100] * (length - len(velocity_list))
 
+        # Prepare vrandom list (0-100)
+        vrandom_raw = pconf.get("v-random", pconf.get("vrandom", []))
+        if not vrandom_raw:
+            vrandom_list = [0] * length
+        else:
+            vrandom_list = []
+            for v in vrandom_raw[:length]:
+                try:
+                    val = int(v)
+                except (ValueError, TypeError):
+                    val = 0
+                vrandom_list.append(max(0, min(100, val)))
+            if len(vrandom_list) < length:
+                vrandom_list += [0] * (length - len(vrandom_list))
+
+        division_str = str(pconf.get("division", "1/16"))
+        pulses_val = parse_division(division_str)
+
         patterns_cfg[pname] = {
             "length": max(1, min(16, length)),
             "steps": steps_list,
             "octave": max(-5, min(5, octave_shift)),  # clamp defensively
             "velocity": velocity_list,
+            "vrandom": vrandom_list,
+            "pulses": pulses_val,
         }
 
     return in_ch, out_map, patterns_cfg
@@ -214,15 +264,18 @@ def main():
     }
 
     # Runtime state
-    chord_notes: List[int] = []             # current chord (sorted)
-    # Arp is considered "armed" whenever `chord_notes` is non-empty.
-    tick_counter = 0                        # MIDI clock ticks since start
-    step_index = 0                          # 16-th step counter
+    chord_notes: List[int] = []  # current chord (sorted)
     last_played: Dict[str, Optional[int]] = {name: None for name in outputs}
-    # store per-pattern random indices for 'R' steps
-    pattern_state: Dict[str, Dict[str, List[Optional[int]]]] = {
-        name: {"rand": [], "rand_vel": []} for name in outputs
-    }
+
+    # Per-pattern runtime (independent clocks)
+    pattern_state: Dict[str, Dict[str, Any]] = {}
+    for name, cfg in pattern_cfgs.items():
+        pattern_state[name] = {
+            "tick": 0,
+            "step": 0,
+            "rand": [],
+            "rand_vel": [],
+        }
 
     input_name = "TR Router In"
     print(
@@ -237,55 +290,46 @@ def main():
                 # ----------------------------- Clock & transport handling ----
                 if msg.type == "clock":
                     if not chord_notes:
-                        # no notes held – ensure any lingering notes are off
+                        # stop any sustained notes if chord empty
                         for name, last in last_played.items():
                             if last is not None:
                                 port, ch = outputs[name]
                                 port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
                                 last_played[name] = None
-                        continue  # nothing to arpeggiate
-
-                    tick_counter += 1
-                    if tick_counter % TICKS_PER_STEP != 0:
-                        continue  # wait until next 16-th note
-
-                    if not chord_notes:
-                        continue  # nothing to play
-
-                    # send note-offs for previous step
-                    for name, last in last_played.items():
-                        if last is not None:
-                            port, ch = outputs[name]
-                            port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
-                            last_played[name] = None
+                        continue
 
                     ln = len(chord_notes)
                     if ln == 0:
                         continue
 
-                    # determine notes for each pattern and send note-ons based on config
                     for name, cfg in pattern_cfgs.items():
-                        plen = cfg.get("length", 0) or 0
-                        steps = cfg.get("steps", [])
-                        velocities = cfg.get("velocity", [100]*plen)
-                        if plen == 0 or not steps:
-                            continue
-                        step_pos = step_index % plen
+                        rt = pattern_state[name]
+                        rt["tick"] += 1
+                        if rt["tick"] < cfg["pulses"]:
+                            continue  # wait until pulses reached
+
+                        rt["tick"] -= cfg["pulses"]
+
+                        plen = cfg["length"]
+                        steps = cfg["steps"]
+                        velocities = cfg["velocity"]
+                        vrands = cfg["vrandom"]
+
+                        step_pos = rt["step"] % plen
                         # Reset random cache at start of cycle
                         if step_pos == 0:
-                            pattern_state[name]["rand"] = [None] * len(steps)
-                            pattern_state[name]["rand_vel"] = [None] * len(velocities)
+                            rt["rand"] = [None] * len(steps)
+                            rt["rand_vel"] = [None] * len(velocities)
 
                         step_val = steps[step_pos]
 
                         # Handle 'R' (random) value
                         if isinstance(step_val, str) and step_val.upper() == "R":
-                            # ensure cache list length
-                            if len(pattern_state[name]["rand"]) < len(steps):
-                                pattern_state[name]["rand"] += [None]*(len(steps)-len(pattern_state[name]["rand"]))
-                            if pattern_state[name]["rand"][step_pos] is None:
-                                pattern_state[name]["rand"][step_pos] = random.randint(1, ln)
-                            idx = pattern_state[name]["rand"][step_pos]
+                            if len(rt["rand"]) < len(steps):
+                                rt["rand"] += [None]*(len(steps)-len(rt["rand"]))
+                            if rt["rand"][step_pos] is None:
+                                rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index]
+                            idx = rt["rand"][step_pos]
                         else:
                             idx = int(step_val)
 
@@ -297,13 +341,13 @@ def main():
                         vel_val = velocities[step_pos % len(velocities)] if velocities else 100
                         # handle random velocity
                         if isinstance(vel_val, str) and vel_val.upper() == "R":
-                            if len(pattern_state[name]["rand_vel"]) < len(velocities):
-                                pattern_state[name]["rand_vel"] += [None]*(len(velocities)-len(pattern_state[name]["rand_vel"]))
-                            if pattern_state[name]["rand_vel"][step_pos] is None:
-                                pattern_state[name]["rand_vel"][step_pos] = random.randint(1, 127)
-                            vel = pattern_state[name]["rand_vel"][step_pos]
+                            if len(rt["rand_vel"]) < len(velocities):
+                                rt["rand_vel"] += [None]*(len(velocities)-len(rt["rand_vel"]))
+                            if rt["rand_vel"][step_pos] is None:
+                                rt["rand_vel"][step_pos] = random.randint(1, 127)  # type: ignore[index]
+                            base_vel = rt["rand_vel"][step_pos]
                         else:
-                            vel = int(vel_val)
+                            base_vel = int(vel_val)
 
                         # apply octave shift (12 semitones per octave)
                         octave = int(cfg.get("octave", 0))
@@ -311,10 +355,12 @@ def main():
                         if not (0 <= note <= 127):
                             continue  # skip if out of MIDI range
                         port, ch = outputs[name]
-                        port.send(mido.Message("note_on", note=note, velocity=vel, channel=ch))
+                        port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
                         last_played[name] = note
 
-                    step_index += 1
+                        # advance step
+                        rt["step"] = (rt["step"] + 1) % plen
+
                     continue  # handled clock
 
                 if msg.type == "start":
@@ -354,12 +400,18 @@ def main():
                                 port, ch = outputs[name]
                                 port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
                                 last_played[name] = None
-                        step_index = 0  # reset for next chord
+                        for rt in pattern_state.values():
+                            rt["tick"] = 0
+                            rt["step"] = 0
+                            rt["rand"] = []
+                            rt["rand_vel"] = []
                         continue
 
                     # When chord starts (was empty) → reset sequence to start on index 0
                     if prev_len == 0 and new_len > 0:
-                        step_index = 0
+                        for rt in pattern_state.values():
+                            rt["tick"] = 0
+                            rt["step"] = 0
 
                     # If chord size changed but not empty, keep current step_index so arpeggio continues seamlessly.
                     continue
