@@ -1,19 +1,23 @@
 {
-  "input_channel": 1,
+  "input_channel": 1, //1-16
   "output_channels": {
-    "Pattern 1": 2,
-    "Pattern 2": 3
+    "Pattern 1": 2, //1-16
+    "Pattern 2": 3 //1-16
   },
   "patterns": {
     "Pattern 1": {
-      "length": 4,
-      "steps": [1,2,3,4],
-      "oktawa": 1    // +1 oktawa
+      "length": 4, //1-16
+      "steps": [1, 2, 3, "R"], //1-8 lub "R"
+      "velocity": [123, 80, 70, 90], //1-127
+      "v-random": [0, 50, 0, 100], //0-100
+      "oktawa": 1 //-2 do 2
     },
     "Pattern 2": {
-      "length": 3,
-      "steps": [2,2,1],
-      "oktawa": 0   // -1 oktawa
+      "length": 6, //1-16
+      "steps": ["R", 1, 1, "R", 1, 1], //1-8 lub "R"
+      "velocity": [100, 80, 80, 80, 80, 80], //1-127
+      "v-random": [100, 20, 20, 20, 20, 20], //0-100
+      "oktawa": 0 //-2 do 2
     }
   }
 } 
