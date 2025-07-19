@@ -281,6 +281,8 @@ class PatternWidget(QGroupBox):
 
     def _on_enabled_toggled(self, checked: bool):
         self._enabled = checked
+        # persist to backing data so export/save reflects change immediately
+        self._data["enabled"] = self._enabled
         self._update_opacity()  # type: ignore[attr-defined]
         # Keep interactions possible even when disabled
         self.setEnabled(True)
@@ -821,6 +823,12 @@ class ConfigEditor(QMainWindow):
         self._build_menu()
         self._build_toolbar()
 
+        # Send current configuration to midi_router on startup
+        try:
+            self.save_current()
+        except Exception:
+            pass
+
     # ------------------------------- UI build ------------------------------
 
     def _build_menu(self):
@@ -1088,6 +1096,22 @@ class ConfigEditor(QMainWindow):
                     self.preset_name_edit.setText(preset_path.stem)
             except Exception:
                 self.preset_name_edit.setText("New preset")
+
+    # ------------------------------------------------------------------
+    # Graceful shutdown – ensure midi_router is terminated as well
+    # ------------------------------------------------------------------
+
+    def closeEvent(self, event):  # type: ignore[override]
+        """On window close, terminate running midi_router process (if any)."""
+        try:
+            if LOCK_PATH.exists():
+                pid = int(LOCK_PATH.read_text())
+                # Avoid killing self
+                if pid and pid != os.getpid():
+                    os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass  # ignore errors
+        super().closeEvent(event)
 
 
 # ---------------------------------------------------------------------------

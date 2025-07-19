@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 
 import mido
+import sys
 import random
 import os, signal, time
 DEBUG_ARP = bool(os.environ.get("DEBUG_ARP"))
@@ -374,6 +375,28 @@ def main():
 
     try:
         signal.signal(RELOAD_SIGNAL, _handle_reload)
+        # Graceful termination handler – ensure Note Offs sent
+        def _handle_terminate(signum, frame):  # type: ignore[unused-arg]
+            # Send Note Off for any sounding notes
+            try:
+                for pname, rt in pattern_state.items():
+                    if rt.get("note_on") is not None and pname in outputs:
+                        port, ch = outputs[pname]
+                        port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                        # Optionally send All Notes Off CC123
+                        port.send(mido.Message("control_change", control=123, value=0, channel=ch))
+            except Exception:
+                pass
+            try:
+                for port, _ch in outputs.values():
+                    port.close()
+            except Exception:
+                pass
+            cleanup_lock()
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, _handle_terminate)
+        signal.signal(signal.SIGINT, _handle_terminate)
     except Exception as e:
         print(f"Warning: cannot set reload signal handler: {e}")
 
