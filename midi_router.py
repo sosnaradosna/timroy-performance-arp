@@ -109,7 +109,8 @@ def parse_division(s: str) -> int:
     s = s.strip().lower()
     dotted = s.endswith("d")
     triplet = s.endswith("t")
-    if dotted or triplet:
+    quint = s.endswith("q")
+    if dotted or triplet or quint:
         s_base = s[:-1]
     else:
         s_base = s
@@ -118,6 +119,8 @@ def parse_division(s: str) -> int:
         pulses = int(pulses * 1.5)
     elif triplet:
         pulses = int(pulses * 2 / 3)
+    elif quint:
+        pulses = int(pulses * 4 / 5)
     return max(1, pulses)
 
 
