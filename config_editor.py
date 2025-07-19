@@ -376,7 +376,14 @@ class PatternWidget(QGroupBox):
         # Steps row (row 1)
         for col in range(length):
             box: QComboBox = self.grid.itemAtPosition(1, col + 1).widget()  # type: ignore
-            steps.append(box.currentText())
+            txt = box.currentText()
+            if txt.upper() in ("R", "X"):
+                steps.append(txt.upper())
+            else:
+                try:
+                    steps.append(int(txt))
+                except ValueError:
+                    steps.append(txt)
         # Velocity row (row 2)
         for col in range(length):
             spin: DragSpinBox = self.grid.itemAtPosition(2, col + 1).widget()  # type: ignore
