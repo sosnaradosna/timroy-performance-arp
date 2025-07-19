@@ -441,7 +441,7 @@ class PatternWidget(QGroupBox):
         # r-oct row
         for col in range(length):
             box: QComboBox = self.grid.itemAtPosition(6, col + 1).widget()  # type: ignore[assignment]
-            if random.randint(1, 100) <= settings.sprob: # Assuming sprob controls r-oct randomization
+            if random.randint(1, 100) <= settings.roct:
                 box.setCurrentIndex(random.randrange(box.count()))
         # Gate row
         for col in range(length):

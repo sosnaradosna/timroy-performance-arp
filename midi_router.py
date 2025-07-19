@@ -25,6 +25,7 @@ from typing import List, Dict, Optional, Tuple, Any
 import mido
 import random
 import os, signal, time
+DEBUG_ARP = bool(os.environ.get("DEBUG_ARP"))
 
 # Lock file location (used for single instance + external control)
 LOCK_PATH = Path.home() / ".tr_router.lock"
@@ -341,6 +342,11 @@ def remove_note(chord: List[int], note: int):
         pass
 
 
+def dbg(msg: str):
+    if DEBUG_ARP:
+        print(msg, flush=True)
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
@@ -457,6 +463,7 @@ def main():
             return
 
         port, ch = outputs[pattern_name]
+        dbg(f"{pattern_name} step={step_pos} NOTE_ON {note_num} ch={ch+1}")
         port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
 
         # Register playing note & gate so countdown can turn it off correctly
@@ -533,11 +540,15 @@ def main():
                 if msg.type == "clock":
                     if not chord_notes:
                         # stop any sustained notes if chord empty
-                        for name, last in last_played.items():
-                            if last is not None:
-                                port, ch = outputs[name]
-                                port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
-                                last_played[name] = None
+                        for pname, rt in pattern_state.items():
+                            if rt["note_on"] is not None:
+                                port, ch = outputs[pname]
+                                if DEBUG_ARP:
+                                    print(f"{pname} NOTE_OFF {rt['note_on']} ch={ch+1}")
+                                port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                rt["note_on"] = None
+                                rt["gate_left"] = 0.0
+                            last_played[pname] = None
                         continue
 
                     ln = len(chord_notes)
@@ -569,6 +580,15 @@ def main():
 
                         # Probability check
                         if random.randint(1,100) > sprobs[step_pos % len(sprobs)]:
+                            # probability skip – send off if sustaining
+                            if rt["note_on"] is not None and rt["gate_left"] == -1.0:
+                                port, ch = outputs[name]
+                                if DEBUG_ARP:
+                                    print(f"{name} NOTE_OFF {rt['note_on']} ch={ch+1}")
+                                port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                rt["note_on"] = None
+                                rt["gate_left"] = 0.0
+                                rt["tie_prev"] = False
                             rt["step"] = (rt["step"] + 1) % plen
                             continue
 
@@ -577,7 +597,15 @@ def main():
                         # note index resolution
                         if isinstance(step_val, str):
                             if step_val.upper() == "X":
-                                # rest – advance step and skip note generation
+                                # rest – send pending off if sustaining, advance step
+                                if rt["note_on"] is not None and rt["gate_left"] == -1.0:
+                                    port, ch = outputs[name]
+                                    if DEBUG_ARP:
+                                        print(f"{name} NOTE_OFF {rt['note_on']} ch={ch+1}")
+                                    port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                    rt["note_on"] = None
+                                    rt["gate_left"] = 0.0
+                                    rt["tie_prev"] = False
                                 rt["step"] = (rt["step"] + 1) % plen
                                 continue
                             if step_val.upper() == "R":
@@ -634,6 +662,7 @@ def main():
                                 # Nothing playing, just start note
                                 port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
                                 rt["note_on"] = note_num
+                                last_played[name] = note_num
                             else:
                                 if rt["note_on"] != note_num:
                                     # Different note – overlap for glide
@@ -642,35 +671,27 @@ def main():
                                     rt["pending_left"] = 1.0
                                     port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
                                     rt["note_on"] = note_num
+                                    last_played[name] = note_num
                                 # same note: keep sustaining (no retrigger)
                             rt["gate_left"] = -1.0  # sustain until next non-tie gate
                             rt["tie_prev"] = True
                         else:
-                            # Regular gate step
-                            same_note = (rt["note_on"] == note_num)
-                            if rt["note_on"] is None:
-                                port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
-                                rt["note_on"] = note_num
-                            else:
-                                if same_note:
-                                    # Note already held, just update gate length
-                                    pass
+                            # --- Always retrigger note (avoid hanging) ---
+                            if rt["note_on"] is not None:
+                                # if coming from tie and glide logic needed with different note, keep existing behaviour
+                                if rt["tie_prev"] and rt["note_on"] != note_num:
+                                    rt["pending_off"] = rt["note_on"]
+                                    rt["pending_left"] = 1.0
                                 else:
-                                    if rt["tie_prev"]:
-                                        # From tie: glide overlap with 1 tick
-                                        rt["pending_off"] = rt["note_on"]
-                                        rt["pending_left"] = 1.0
-                                        port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
-                                        rt["note_on"] = note_num
-                                    else:
-                                        # normal retrigger
-                                        port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
-                                        port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
-                                    rt["note_on"] = note_num
+                                    port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+
+                            port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+                            rt["note_on"] = note_num
+                            last_played[name] = note_num
+                            rt["tie_prev"] = False
 
                             gate_percent = int(gate_val) if not isinstance(gate_val, str) else 100
                             rt["gate_left"] = cfg["pulses"] * gate_percent / 100.0
-                            rt["tie_prev"] = False
 
                         # advance step
                         rt["step"] = (rt["step"] + 1) % plen
@@ -681,6 +702,8 @@ def main():
                             rt["gate_left"] -= 1.0
                             if rt["gate_left"] <= 0:
                                 port, ch = outputs[pname]
+                                if DEBUG_ARP:
+                                    print(f"{pname} NOTE_OFF {rt['note_on']} ch={ch+1}")
                                 port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
                                 rt["note_on"] = None
                                 rt["gate_left"] = 0.0
@@ -711,11 +734,15 @@ def main():
 
                 if msg.type == "stop":
                     # Stop only resets counters and shuts off notes; arp will re-arm automatically when notes are held.
-                    for name, last in last_played.items():
-                        if last is not None:
-                            port, ch = outputs[name]
-                            port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
-                            last_played[name] = None
+                    for pname, rt in pattern_state.items():
+                        if rt["note_on"] is not None:
+                            port, ch = outputs[pname]
+                            if DEBUG_ARP:
+                                print(f"{pname} NOTE_OFF {rt['note_on']} ch={ch+1}")
+                            port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                            rt["note_on"] = None
+                            rt["gate_left"] = 0.0
+                        last_played[pname] = None
                     tick_counter = 0
                     step_index = 0
                     print("[Transport] STOP message received – counters cleared")
@@ -734,11 +761,16 @@ def main():
 
                     # When chord becomes empty → stop all currently sounding notes
                     if new_len == 0 and prev_len > 0:
-                        for name, last in last_played.items():
-                            if last is not None:
-                                port, ch = outputs[name]
-                                port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
-                                last_played[name] = None
+                        # Send note_off for any active notes tracked in pattern_state
+                        for pname, rt in pattern_state.items():
+                            if rt["note_on"] is not None:
+                                port, ch = outputs[pname]
+                                if DEBUG_ARP:
+                                    print(f"{pname} NOTE_OFF {rt['note_on']} ch={ch+1}")
+                                port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                rt["note_on"] = None
+                                rt["gate_left"] = 0.0
+                            last_played[pname] = None
                         for rt in pattern_state.values():
                             rt["tick"] = 0.0
                             rt["step"] = 0
@@ -767,14 +799,21 @@ def main():
         finally:
             cleanup_lock()
             # make sure we send note_off on exit
-            for name, last in last_played.items():
-                if last is not None:
-                    port, ch = outputs[name]
-                    port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
+            for pname, rt in pattern_state.items():
+                if rt["note_on"] is not None:
+                    port, ch = outputs[pname]
+                    if DEBUG_ARP:
+                        print(f"{pname} NOTE_OFF {rt['note_on']} ch={ch+1}")
+                    port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                    rt["note_on"] = None
             for port, _ in outputs.values():
                 port.close()
 
 
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
 if __name__ == "__main__":
-    main() 
     main() 
