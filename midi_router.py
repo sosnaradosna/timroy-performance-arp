@@ -179,6 +179,10 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
         if not steps_list:
             steps_list = default_pattern(pname)["steps"]
             length = len(steps_list)
+
+        # Ensure steps_list has exactly *length* elements
+        if len(steps_list) < length:
+            steps_list += [steps_list[-1]] * (length - len(steps_list))
         # Prepare velocity list
         if not velocity_list_raw:
             velocity_list = [100] * length
@@ -194,7 +198,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
                         num = 100
                     velocity_list.append(max(1, min(127, num)))
             if len(velocity_list) < length:
-                velocity_list += [100] * (length - len(velocity_list))
+                velocity_list += [velocity_list[-1]] * (length - len(velocity_list))
 
         # Prepare vrandom list (0-100)
         vrandom_raw = pconf.get("v-random", pconf.get("vrandom", []))
@@ -209,7 +213,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
                     val = 0
                 vrandom_list.append(max(0, min(100, val)))
             if len(vrandom_list) < length:
-                vrandom_list += [0] * (length - len(vrandom_list))
+                vrandom_list += [vrandom_list[-1]] * (length - len(vrandom_list))
 
         # Prepare s-prob list (0-100)
         sprob_raw = pconf.get("s-prob", pconf.get("sprob", []))
@@ -224,7 +228,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
                     val = 100
                 sprob_list.append(max(0, min(100, val)))
             if len(sprob_list) < length:
-                sprob_list += [100] * (length - len(sprob_list))
+                sprob_list += [sprob_list[-1]] * (length - len(sprob_list))
 
         # Prepare s-oct list (-2..2)
         soct_raw = pconf.get("s-oct", pconf.get("soct", []))
@@ -239,7 +243,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
                     val = 0
                 soct_list.append(max(-2, min(2, val)))
             if len(soct_list) < length:
-                soct_list += [0] * (length - len(soct_list))
+                soct_list += [soct_list[-1]] * (length - len(soct_list))
 
         # Prepare r-oct list (strings tokens)
         roct_raw = pconf.get("r-oct", pconf.get("roct", []))
@@ -248,7 +252,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
         else:
             roct_list = [str(v) for v in roct_raw[:length]]
             if len(roct_list) < length:
-                roct_list += ["0"] * (length - len(roct_list))
+                roct_list += [roct_list[-1]] * (length - len(roct_list))
 
         division_str = str(pconf.get("division", "1/16"))
         pulses_val = parse_division(division_str)
@@ -269,7 +273,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
                     g_val = 100
                 gate_list.append(max(1, min(100, g_val)))
             if len(gate_list) < length:
-                gate_list += [100] * (length - len(gate_list))
+                gate_list += [gate_list[-1]] * (length - len(gate_list))
 
         patterns_cfg[pname] = {
             "length": max(1, min(16, length)),

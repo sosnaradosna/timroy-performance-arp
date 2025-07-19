@@ -1,0 +1,115 @@
+{
+  "input_channel": 1,
+  "output_channels": {
+    "Pattern 1": 2,
+    "Pattern 2": 3,
+    "Pattern 3": 4,
+    "Pattern 4": 5
+  },
+  "patterns": {
+    "Pattern 1": {
+      "length": 1,
+      "steps": [
+        "1"
+      ],
+      "velocity": [
+        53
+      ],
+      "v-random": [
+        65
+      ],
+      "s-prob": [
+        69
+      ],
+      "s-oct": [
+        -1
+      ],
+      "r-oct": [
+        "+1"
+      ],
+      "gate": [
+        "T"
+      ],
+      "oktawa": 2,
+      "division": "1/4"
+    },
+    "Pattern 2": {
+      "length": 1,
+      "steps": [
+        "1"
+      ],
+      "velocity": [
+        73
+      ],
+      "v-random": [
+        84
+      ],
+      "s-prob": [
+        100
+      ],
+      "s-oct": [
+        2
+      ],
+      "r-oct": [
+        "+2"
+      ],
+      "gate": [
+        35
+      ],
+      "oktawa": 0,
+      "division": "1/16"
+    },
+    "Pattern 3": {
+      "length": 1,
+      "steps": [
+        "1"
+      ],
+      "velocity": [
+        127
+      ],
+      "v-random": [
+        17
+      ],
+      "s-prob": [
+        12
+      ],
+      "s-oct": [
+        1
+      ],
+      "r-oct": [
+        "+-1"
+      ],
+      "gate": [
+        3
+      ],
+      "oktawa": -2,
+      "division": "1/2"
+    },
+    "Pattern 4": {
+      "length": 1,
+      "steps": [
+        "1"
+      ],
+      "velocity": [
+        54
+      ],
+      "v-random": [
+        88
+      ],
+      "s-prob": [
+        51
+      ],
+      "s-oct": [
+        0
+      ],
+      "r-oct": [
+        "-1"
+      ],
+      "gate": [
+        "T"
+      ],
+      "oktawa": 1,
+      "division": "1/8"
+    }
+  }
+}

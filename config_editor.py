@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional, Union
 import os, signal
+from dataclasses import asdict
 
 from PyQt6.QtCore import Qt, QPoint, QSize
 from PyQt6.QtGui import QIntValidator, QAction, QIcon
@@ -249,7 +250,6 @@ class PatternWidget(QGroupBox):
         if hasattr(self, "grid_container"):
             self.grid_container.adjustSize()
 
-
     def _make_combo(self, options: List[str], current: str) -> QComboBox:
         box = QComboBox()
         for opt in options:
@@ -260,9 +260,109 @@ class PatternWidget(QGroupBox):
         box.setEditable(False)
         return box
 
+    def _capture_grid_state(self):
+        """Read values from existing grid widgets and store them into self._data before grid is rebuilt.
+        This preserves user edits when the pattern length changes."""
+        if self.grid.count() == 0:
+            # Grid hasn't been built yet
+            return
+
+        prev_length = len(self._data.get("steps", []))
+        if prev_length == 0:
+            return
+
+        # Helper to safely fetch widget at given position
+        def _widget(row: int, col: int):
+            item = self.grid.itemAtPosition(row, col)
+            return item.widget() if item else None
+
+        # Steps row (row 1)
+        new_steps = []
+        for col in range(prev_length):
+            box = _widget(1, col + 1)
+            if isinstance(box, QComboBox):
+                txt = box.currentText().strip()
+                txt_up = txt.upper()
+                if txt_up in ("R", "X"):
+                    new_steps.append(txt_up)
+                else:
+                    try:
+                        new_steps.append(int(txt))
+                    except ValueError:
+                        new_steps.append(txt)
+        if new_steps:
+            self._data["steps"] = new_steps
+
+        # Velocity row (row 2)
+        new_velocity = []
+        for col in range(prev_length):
+            spin = _widget(2, col + 1)
+            if isinstance(spin, DragSpinBox):
+                new_velocity.append(spin.value())
+        if new_velocity:
+            self._data["velocity"] = new_velocity
+
+        # v-random row (row 3)
+        new_vrand = []
+        for col in range(prev_length):
+            spin = _widget(3, col + 1)
+            if isinstance(spin, DragSpinBox):
+                new_vrand.append(spin.value())
+        if new_vrand:
+            self._data["v-random"] = new_vrand
+
+        # s-prob row (row 4)
+        new_sprob = []
+        for col in range(prev_length):
+            spin = _widget(4, col + 1)
+            if isinstance(spin, DragSpinBox):
+                new_sprob.append(spin.value())
+        if new_sprob:
+            self._data["s-prob"] = new_sprob
+
+        # s-oct row (row 5)
+        new_soct = []
+        for col in range(prev_length):
+            box = _widget(5, col + 1)
+            if isinstance(box, QComboBox):
+                try:
+                    new_soct.append(int(box.currentText()))
+                except ValueError:
+                    new_soct.append(0)
+        if new_soct:
+            self._data["s-oct"] = new_soct
+
+        # r-oct row (row 6)
+        new_roct = []
+        for col in range(prev_length):
+            box = _widget(6, col + 1)
+            if isinstance(box, QComboBox):
+                new_roct.append(box.currentText())
+        if new_roct:
+            self._data["r-oct"] = new_roct
+
+        # Gate row (row 7)
+        new_gate = []
+        for col in range(prev_length):
+            spin = _widget(7, col + 1)
+            if isinstance(spin, GateSpinBox):
+                txt = spin.value_text()
+                if txt == "T":
+                    new_gate.append("T")
+                else:
+                    try:
+                        new_gate.append(int(txt))
+                    except ValueError:
+                        new_gate.append(100)
+        if new_gate:
+            self._data["gate"] = new_gate
+
     # --------------------------------- grid ---------------------------------
 
     def _build_grid(self, _changed: Optional[str] = None) -> None:
+        # Capture current values before rebuilding so user edits are preserved
+        self._capture_grid_state()
+
         # clear existing widgets
         while self.grid.count():
             item = self.grid.takeAt(0)
@@ -606,7 +706,14 @@ class ConfigEditor(QMainWindow):
 
         self.pattern_widgets: Dict[str, PatternWidget] = {}
         self.rand_settings = RandomSettings()
-        self._load_config(CONFIG_PATH)
+
+        # Prefer loading a preset named "Default.json" from presets directory if it exists
+        default_preset_path = (Path(__file__).resolve().parent / "presets" / "Default.json")
+        if default_preset_path.exists():
+            self._load_config(default_preset_path)
+        else:
+            # Fallback to generic config.json in app directory
+            self._load_config(CONFIG_PATH)
         self._build_menu()
         self._build_toolbar()
 
@@ -655,6 +762,14 @@ class ConfigEditor(QMainWindow):
         self._output_channels: Dict[str, int] = data.get("output_channels", {})
         patterns: Dict[str, Dict[str, Any]] = data.get("patterns", {})
 
+        # Load saved random settings if present
+        rs_data = data.get("random_settings")
+        if rs_data and isinstance(rs_data, dict):
+            # update existing RandomSettings instance
+            for k, v in rs_data.items():
+                if hasattr(self.rand_settings, k):
+                    setattr(self.rand_settings, k, v)
+
         # Build scrollable area for patterns
         central = QWidget()
         vbox = QVBoxLayout()
@@ -696,6 +811,7 @@ class ConfigEditor(QMainWindow):
             "input_channel": self._input_channel,
             "output_channels": out_channels,
             "patterns": patterns,
+            "random_settings": asdict(self.rand_settings),
         }
 
     def save_current(self):
