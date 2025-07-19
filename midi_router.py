@@ -300,6 +300,8 @@ def main():
             "note_on": None,
             "gate_left": 0.0,
             "tie_prev": False,
+            "pending_off": None,
+            "pending_left": 0.0,
         }
 
     # -------------------------------------------------------------------
@@ -464,8 +466,10 @@ def main():
                             else:
                                 if rt["note_on"] != note:
                                     # Different note – overlap for glide
+                                    # overlap 1 tick: schedule previous note off after next tick
+                                    rt["pending_off"] = rt["note_on"]
+                                    rt["pending_left"] = 1.0
                                     port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
-                                    port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
                                     rt["note_on"] = note
                                 # same note: keep sustaining (no retrigger)
                             rt["gate_left"] = -1.0  # sustain until next non-tie gate
@@ -482,9 +486,11 @@ def main():
                                     pass
                                 else:
                                     if rt["tie_prev"]:
-                                        # From tie: glide overlap
+                                        # From tie: glide overlap with 1 tick
+                                        rt["pending_off"] = rt["note_on"]
+                                        rt["pending_left"] = 1.0
                                         port.send(mido.Message("note_on", note=note, velocity=base_vel, channel=ch))
-                                        port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
+                                        rt["note_on"] = note
                                     else:
                                         # normal retrigger
                                         port.send(mido.Message("note_off", note=rt["note_on"], velocity=0, channel=ch))
@@ -508,6 +514,13 @@ def main():
                                 rt["note_on"] = None
                                 rt["gate_left"] = 0.0
                         # if gate_left == -1 (tie) keep sustaining
+                        # pending off overlap handling
+                        if rt["pending_off"] is not None:
+                            rt["pending_left"] -= 1.0
+                            if rt["pending_left"] <= 0:
+                                port, ch = outputs[pname]
+                                port.send(mido.Message("note_off", note=rt["pending_off"], velocity=0, channel=ch))
+                                rt["pending_off"] = None
 
                     continue  # handled clock
 
