@@ -211,7 +211,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             "octave": max(-5, min(5, octave_shift)),  # clamp defensively
             "velocity": velocity_list,
             "vrandom": vrandom_list,
-            "pulses": pulses_val,
+            "pulses": float(pulses_val),
         }
 
     return in_ch, out_map, patterns_cfg
@@ -274,11 +274,80 @@ def main():
     pattern_state: Dict[str, Dict[str, Any]] = {}
     for name, cfg in pattern_cfgs.items():
         pattern_state[name] = {
-            "tick": 0,
+            "tick": 0.0,
             "step": 0,
             "rand": [],
             "rand_vel": [],
         }
+
+    # -------------------------------------------------------------------
+    # Helper to play one step immediately (used on START and chord enter)
+    # -------------------------------------------------------------------
+
+    def play_pattern_step(pattern_name: str):
+        """Send note for current step of pattern immediately."""
+        cfg = pattern_cfgs[pattern_name]
+        rt = pattern_state[pattern_name]
+        plen = cfg["length"]
+        steps = cfg["steps"]
+        velocities = cfg["velocity"]
+        vrands = cfg["vrandom"]
+
+        if plen == 0 or not steps or not chord_notes:
+            return
+
+        step_pos = rt["step"] % plen
+
+        # reset caches if step 0 (fresh loop)
+        if step_pos == 0:
+            rt["rand"] = [None] * len(steps)
+            rt["rand_vel"] = [None] * len(velocities)
+
+        ln = len(chord_notes)
+        step_val = steps[step_pos]
+
+        # note index resolution
+        if isinstance(step_val, str) and step_val.upper() == "R":
+            if len(rt["rand"]) < len(steps):
+                rt["rand"] += [None]*(len(steps)-len(rt["rand"]))
+            if rt["rand"][step_pos] is None:  # type: ignore[index]
+                rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index,assignment]
+            idx = rt["rand"][step_pos]
+        else:
+            idx = int(step_val)
+
+        if idx is None or not (1 <= idx <= ln):
+            return
+
+        # velocity resolution
+        vel_val = velocities[step_pos % len(velocities)] if velocities else 100
+        vrand_val = vrands[step_pos % len(vrands)] if vrands else 0
+
+        if isinstance(vel_val, str) and vel_val.upper() == "R":
+            base_vel = random.randint(1, 127)
+        else:
+            base_vel = int(vel_val)
+
+        if vrand_val >= 100:
+            vel = random.randint(1, 127)
+        elif vrand_val > 0:
+            span = int(vrand_val * 127 / 100)
+            half = span // 2
+            vel = random.randint(max(1, base_vel - half), min(127, base_vel + half))
+        else:
+            vel = base_vel
+
+        # octave shift
+        note_num = chord_notes[idx - 1] + cfg["octave"] * 12
+        if not (0 <= note_num <= 127):
+            return
+
+        port, ch = outputs[pattern_name]
+        port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+        last_played[pattern_name] = note_num
+
+        # advance step for next cycle counting
+        rt["step"] = (rt["step"] + 1) % plen
 
     input_name = "TR Router In"
     print(
@@ -307,8 +376,8 @@ def main():
 
                     for name, cfg in pattern_cfgs.items():
                         rt = pattern_state[name]
-                        rt["tick"] += 1
-                        if rt["tick"] < cfg["pulses"]:
+                        rt["tick"] += 1.0
+                        if rt["tick"] + 1e-9 < cfg["pulses"]:
                             continue  # wait until pulses reached
 
                         rt["tick"] -= cfg["pulses"]
@@ -330,8 +399,8 @@ def main():
                         if isinstance(step_val, str) and step_val.upper() == "R":
                             if len(rt["rand"]) < len(steps):
                                 rt["rand"] += [None]*(len(steps)-len(rt["rand"]))
-                            if rt["rand"][step_pos] is None:
-                                rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index]
+                            if rt["rand"][step_pos] is None:  # type: ignore[index]
+                                rt["rand"][step_pos] = random.randint(1, ln)  # type: ignore[index,assignment]
                             idx = rt["rand"][step_pos]
                         else:
                             idx = int(step_val)
@@ -346,8 +415,8 @@ def main():
                         if isinstance(vel_val, str) and vel_val.upper() == "R":
                             if len(rt["rand_vel"]) < len(velocities):
                                 rt["rand_vel"] += [None]*(len(velocities)-len(rt["rand_vel"]))
-                            if rt["rand_vel"][step_pos] is None:
-                                rt["rand_vel"][step_pos] = random.randint(1, 127)  # type: ignore[index]
+                            if rt["rand_vel"][step_pos] is None:  # type: ignore[index,assignment]
+                                rt["rand_vel"][step_pos] = random.randint(1, 127)  # type: ignore[index,assignment]
                             base_vel = rt["rand_vel"][step_pos]
                         else:
                             base_vel = int(vel_val)
@@ -367,10 +436,17 @@ def main():
                     continue  # handled clock
 
                 if msg.type == "start":
-                    tick_counter = 0
-                    step_index = 0
-                    print("[Transport] START message received – counter reset (optional)")
-                    # don't change behaviour
+                    print("[Transport] START received – immediate first step")
+                    for rt in pattern_state.values():
+                        rt["tick"] = 0.0
+                        rt["step"] = 0
+                        rt["rand"] = []
+                        rt["rand_vel"] = []
+
+                    # Send first step immediately if chord held
+                    if chord_notes:
+                        for pname in pattern_cfgs.keys():
+                            play_pattern_step(pname)
                     continue
 
                 if msg.type == "stop":
@@ -404,7 +480,7 @@ def main():
                                 port.send(mido.Message("note_off", note=last, velocity=0, channel=ch))
                                 last_played[name] = None
                         for rt in pattern_state.values():
-                            rt["tick"] = 0
+                            rt["tick"] = 0.0
                             rt["step"] = 0
                             rt["rand"] = []
                             rt["rand_vel"] = []
@@ -413,8 +489,13 @@ def main():
                     # When chord starts (was empty) → reset sequence to start on index 0
                     if prev_len == 0 and new_len > 0:
                         for rt in pattern_state.values():
-                            rt["tick"] = 0
+                            rt["tick"] = 0.0
                             rt["step"] = 0
+                            rt["rand"] = []
+                            rt["rand_vel"] = []
+                        # play first step instantly
+                        for pname in pattern_cfgs.keys():
+                            play_pattern_step(pname)
 
                     # If chord size changed but not empty, keep current step_index so arpeggio continues seamlessly.
                     continue
