@@ -21,13 +21,8 @@ jobs:
           python -c "from PIL import Image; Image.open('app-icon.png').convert('RGBA').save('app-icon.ico')"
 
       - name: Build executable
-        run: |
-          pyinstaller -y --name "Tim Roy Performer Arp" --windowed --onedir ^
-            --icon app-icon.ico ^
-            --add-data "config.json;." ^
-            --add-data "presets;presets" ^
-            --add-data "icons;icons" ^
-            main_app.py
+        run: >-
+          pyinstaller -y --name "Tim Roy Performer Arp" --windowed --onedir --icon app-icon.ico --add-data "config.json;." --add-data "presets;presets" --add-data "icons;icons" main_app.py
 
       - name: Install Inno Setup CLI
         run: choco install innosetup -y
