@@ -194,17 +194,25 @@ class PatternWidget(QGroupBox):
     """Widget representing a single pattern block."""
 
     def __init__(self, name: str, cfg: Dict[str, Any], midi_channel: int, parent=None):
-        super().__init__(name, parent)
-        self.setStyleSheet("QGroupBox { font-weight: bold; margin-top:20px; }")
+        super().__init__("", parent)  # title handled manually via label
+        self.setStyleSheet("QGroupBox { margin-top:20px; }")
         self._name = name
         self._data = cfg  # reference maintained
         self._output_channel = midi_channel
 
         self.top_layout = QHBoxLayout()
+
+        # Pattern name label on the left
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet("font-weight: bold;")
+        self.top_layout.addWidget(name_lbl)
+
+        # Center section
+        self.top_layout.addStretch()
+
         self.length_combo = self._make_combo([str(i) for i in range(1, 17)], str(cfg.get("length", 1)))
         self.octave_combo = self._make_combo([str(i) for i in range(-2, 3)], str(cfg.get("oktawa", 0)))
         self.division_combo = self._make_combo(DIVISION_OPTIONS, cfg.get("division", "1/16"))
-        self.channel_combo = self._make_combo([str(i) for i in range(1, 17)], str(midi_channel))
 
         self.top_layout.addWidget(QLabel("Length"))
         self.top_layout.addWidget(self.length_combo)
@@ -212,9 +220,13 @@ class PatternWidget(QGroupBox):
         self.top_layout.addWidget(self.octave_combo)
         self.top_layout.addWidget(QLabel("Division"))
         self.top_layout.addWidget(self.division_combo)
+
+        # Right section
+        self.top_layout.addStretch()
+
+        self.channel_combo = self._make_combo([str(i) for i in range(1, 17)], str(midi_channel))
         self.top_layout.addWidget(QLabel("MIDI ch"))
         self.top_layout.addWidget(self.channel_combo)
-        self.top_layout.addStretch()
 
         self.grid = QGridLayout()
         self.grid.setHorizontalSpacing(4)
