@@ -407,17 +407,41 @@ def main():
                 if reload_requested:
                     reload_requested = False
                     try:
-                        _in, _out, new_cfgs = load_config()
+                        _in, new_out_map, new_cfgs = load_config()
+
+                        # Recreate output ports if mapping changed
+                        if new_out_map != out_map:
+                            # Close existing ports
+                            for port, _ch in outputs.values():
+                                try:
+                                    port.close()
+                                except Exception:
+                                    pass
+                            outputs = create_output_ports(new_out_map)  # type: ignore[assignment]
+                            out_map.clear()
+                            out_map.update(new_out_map)
+                            # Reset last_played to match new outputs
+                            last_played.clear()
+                            last_played.update({name: None for name in outputs})
+
                         pattern_cfgs = new_cfgs  # type: ignore[assignment]
-                        print("Configuration reloaded from config.json")
-                        # reset pattern runtime to avoid mismatches
-                        for name in pattern_state:
-                            pattern_state[name].update({
+
+                        # Recreate/refresh pattern_state dict
+                        pattern_state.clear()
+                        for name, cfg in pattern_cfgs.items():
+                            pattern_state[name] = {
                                 "tick": 0.0,
                                 "step": 0,
                                 "rand": [],
                                 "rand_vel": [],
-                            })
+                                "note_on": None,
+                                "gate_left": 0.0,
+                                "tie_prev": False,
+                                "pending_off": None,
+                                "pending_left": 0.0,
+                            }
+
+                        print("Configuration reloaded from config.json (ports and patterns updated)")
                     except Exception as err:
                         print(f"Failed to reload configuration: {err}")
                 # ----------------------------- Clock & transport handling ----
@@ -468,8 +492,7 @@ def main():
                             idx = int(step_val)
 
                         if idx is None or not (1 <= idx <= ln):
-                            # index out of current chord range → silent step
-                            continue
+                            idx = random.randint(1, ln)
                         note = chord_notes[idx - 1]
                         # choose velocity for this step
                         vel_val = velocities[step_pos % len(velocities)] if velocities else 100

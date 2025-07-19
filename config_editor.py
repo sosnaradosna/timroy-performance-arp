@@ -15,13 +15,21 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QDialog,
+    QDialogButtonBox,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QToolBar,
+    QToolButton,
+    QCheckBox,
+    QSlider,
     QVBoxLayout,
     QWidget,
+    QStyle,
 )
+from dataclasses import dataclass, field
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 LOCK_PATH = Path.home() / ".tr_router.lock"
@@ -340,6 +348,154 @@ class PatternWidget(QGroupBox):
         }
         return midi_ch, data
 
+    def randomize(self, settings: "RandomSettings"):
+        import random
+        # Randomize top-level params (except MIDI channel)
+        if random.randint(1, 100) <= settings.length:
+            self.length_combo.setCurrentText(str(random.randint(1, 16)))
+        if random.randint(1, 100) <= settings.octave:
+            self.octave_combo.setCurrentText(str(random.randint(-2, 2)))
+        if random.randint(1, 100) <= settings.division:
+            allowed_divs = [d for d in DIVISION_OPTIONS if (
+                (settings.allow_div_d or not d.endswith("d")) and
+                (settings.allow_div_t or not d.endswith("t")) and
+                (settings.allow_div_q or not d.endswith("q"))
+            )]
+            self.division_combo.setCurrentText(random.choice(allowed_divs))
+        length = int(self.length_combo.currentText())
+        # Rebuild grid ensures correct length
+        self._build_grid()
+        # Steps row
+        for col in range(length):
+            box: QComboBox = self.grid.itemAtPosition(1, col + 1).widget()  # type: ignore
+            if random.randint(1, 100) <= settings.steps:
+                box.setCurrentIndex(random.randrange(box.count()))
+        # Velocity row
+        for col in range(length):
+            spin: DragSpinBox = self.grid.itemAtPosition(2, col + 1).widget()  # type: ignore[assignment]
+            if random.randint(1, 100) <= settings.velocity:
+                spin.setValue(random.randint(1, 127))  # type: ignore[attr-defined]
+        # v-random row
+        for col in range(length):
+            spin: DragSpinBox = self.grid.itemAtPosition(3, col + 1).widget()  # type: ignore[assignment]
+            if random.randint(1, 100) <= settings.vrandom:
+                spin.setValue(random.randint(0, 100))  # type: ignore[attr-defined]
+        # Gate row
+        for col in range(length):
+            spin: GateSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore
+            if random.randint(1, 100) <= settings.gate:
+                if settings.allow_gate_T and random.random() < 0.2:
+                    spin.setText("T")
+                else:
+                    spin._val_to_text(random.randint(0, 100))
+
+
+# ---------------------------------------------------------------------------
+# Randomization settings dataclass
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RandomSettings:
+    length: int = 100
+    octave: int = 100
+    division: int = 100
+    steps: int = 100
+    velocity: int = 100
+    vrandom: int = 100
+    gate: int = 100
+    patterns_enabled: Dict[str, bool] = field(
+        default_factory=lambda: {
+            "Pattern 1": True,
+            "Pattern 2": True,
+            "Pattern 3": True,
+            "Pattern 4": True,
+        }
+    )
+    allow_gate_T: bool = True
+    allow_div_d: bool = True
+    allow_div_t: bool = True
+    allow_div_q: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Settings dialog
+# ---------------------------------------------------------------------------
+
+
+class RandomSettingsDialog(QDialog):
+    def __init__(self, settings: "RandomSettings", pattern_names: List[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Global Random Settings")
+        self._settings = settings
+        layout = QVBoxLayout()
+
+        # Sliders section
+        sliders_cfg = [
+            ("Length", "length"),
+            ("Octave", "octave"),
+            ("Division", "division"),
+            ("Steps", "steps"),
+            ("Velocity", "velocity"),
+            ("V-Random", "vrandom"),
+            ("Gate", "gate"),
+        ]
+        for label, attr in sliders_cfg:
+            hl = QHBoxLayout()
+            hl.addWidget(QLabel(label))
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(getattr(settings, attr))
+            slider.setTickInterval(10)
+            slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+            value_lbl = QLabel(str(slider.value()))
+
+            def make_upd(lbl: QLabel, name: str):
+                return lambda val: (lbl.setText(str(val)), setattr(settings, name, val))
+
+            slider.valueChanged.connect(make_upd(value_lbl, attr))  # type: ignore[arg-type]
+            hl.addWidget(slider)
+            hl.addWidget(value_lbl)
+            layout.addLayout(hl)
+
+        # Patterns enable checkboxes
+        layout.addWidget(QLabel("Affect patterns:"))
+        pat_layout = QHBoxLayout()
+        for pname in pattern_names:
+            cb = QCheckBox(pname)
+            cb.setChecked(settings.patterns_enabled.get(pname, True))
+
+            def make_toggle(name: str):
+                return lambda state: settings.patterns_enabled.__setitem__(name, state == Qt.CheckState.Checked)
+
+            cb.stateChanged.connect(make_toggle(pname))  # type: ignore[arg-type]
+            pat_layout.addWidget(cb)
+        layout.addLayout(pat_layout)
+
+        # Other options
+        layout.addWidget(QLabel("Random value options:"))
+        other_layout = QHBoxLayout()
+        self.cb_gate_T = QCheckBox("Allow Gate T")
+        self.cb_gate_T.setChecked(settings.allow_gate_T)
+        self.cb_gate_T.stateChanged.connect(lambda s: setattr(settings, "allow_gate_T", s == Qt.CheckState.Checked))  # type: ignore[arg-type]
+        other_layout.addWidget(self.cb_gate_T)
+
+        for lbl, attr in [("Allow d", "allow_div_d"), ("Allow t", "allow_div_t"), ("Allow q", "allow_div_q")]:
+            cb = QCheckBox(lbl)
+            cb.setChecked(getattr(settings, attr))
+            cb.stateChanged.connect(lambda s, a=attr: setattr(settings, a, s == Qt.CheckState.Checked))  # type: ignore[arg-type]
+            other_layout.addWidget(cb)
+
+        layout.addLayout(other_layout)
+
+        # Buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.setLayout(layout)
+
 
 class ConfigEditor(QMainWindow):
     def __init__(self):
@@ -348,8 +504,10 @@ class ConfigEditor(QMainWindow):
         self.resize(1000, 600)
 
         self.pattern_widgets: Dict[str, PatternWidget] = {}
+        self.rand_settings = RandomSettings()
         self._load_config(CONFIG_PATH)
         self._build_menu()
+        self._build_toolbar()
 
     # ------------------------------- UI build ------------------------------
 
@@ -471,6 +629,26 @@ class ConfigEditor(QMainWindow):
         except Exception:
             # Non-fatal – router may not be running
             pass
+
+    def _build_toolbar(self):
+        toolbar = QToolBar("Tools", self)
+        self.addToolBar(toolbar)
+        rand_act = toolbar.addAction("Global Random")
+        rand_act.triggered.connect(self.randomize_all)  # type: ignore[arg-type]
+
+        settings_btn = QToolButton()
+        settings_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        settings_btn.clicked.connect(self.open_random_settings)  # type: ignore[arg-type]
+        toolbar.addWidget(settings_btn)
+
+    def randomize_all(self, checked: bool = False):  # noqa: F841
+        for name, pw in self.pattern_widgets.items():
+            if self.rand_settings.patterns_enabled.get(name, True):
+                pw.randomize(self.rand_settings)
+
+    def open_random_settings(self):
+        dlg = RandomSettingsDialog(self.rand_settings, list(self.pattern_widgets.keys()), self)
+        dlg.exec()
 
 
 # ---------------------------------------------------------------------------
