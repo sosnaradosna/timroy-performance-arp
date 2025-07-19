@@ -136,7 +136,8 @@
         100
       ],
       "oktawa": 0,
-      "division": "1/16"
+      "division": "1/16",
+      "enabled": true
     },
     "Pattern 2": {
       "length": 16,
@@ -267,7 +268,8 @@
         100
       ],
       "oktawa": 0,
-      "division": "1/16"
+      "division": "1/16",
+      "enabled": false
     },
     "Pattern 3": {
       "length": 16,
@@ -398,7 +400,8 @@
         100
       ],
       "oktawa": 0,
-      "division": "1/16"
+      "division": "1/16",
+      "enabled": false
     },
     "Pattern 4": {
       "length": 16,
@@ -529,7 +532,8 @@
         100
       ],
       "oktawa": 0,
-      "division": "1/4"
+      "division": "1/4",
+      "enabled": false
     }
   },
   "random_settings": {

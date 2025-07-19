@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "description": "Minimal MIDI router – runs python midi_router.py via npm.",
   "scripts": {
-    "start": "python3 midi_router.py & python3 config_editor.py"
+    "start": "python3 main_app.py"
   }
 } 

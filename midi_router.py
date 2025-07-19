@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 
 import mido
+# Ensure rtmidi backend is included in frozen builds (PyInstaller)
+import mido.backends.rtmidi  # type: ignore  # noqa: F401
 import sys
 import random
 import os, signal, time
