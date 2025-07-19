@@ -231,12 +231,15 @@ class PatternWidget(QGroupBox):
         self.grid = QGridLayout()
         self.grid.setHorizontalSpacing(4)
         self.grid.setVerticalSpacing(4)
+        self.grid.setContentsMargins(0, 0, 0, 0)
 
         grid_container = QWidget()
         grid_container.setLayout(self.grid)
+        grid_container.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         grid_scroll = QScrollArea()
         grid_scroll.setWidgetResizable(True)
         grid_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        grid_scroll.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         grid_scroll.setWidget(grid_container)
 
         main_layout = QVBoxLayout()
@@ -287,10 +290,12 @@ class PatternWidget(QGroupBox):
         for col, lbl in enumerate(headers):
             self.grid.addWidget(QLabel(lbl), 0, col + 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # Steps row
-        self.grid.addWidget(QLabel("Steps"), 1, 0)
+        self.grid.addWidget(QLabel("Step"), 1, 0)
         for col in range(length):
             box = QComboBox()
-            box.addItems(STEP_OPTIONS)
+            box.setFixedWidth(70)
+            for opt in STEP_OPTIONS:
+                box.addItem(opt)
             current = str(self._data["steps"][col])
             idx = box.findText(current)
             if idx >= 0:
@@ -300,24 +305,28 @@ class PatternWidget(QGroupBox):
         self.grid.addWidget(QLabel("Velocity"), 2, 0)
         for col in range(length):
             spin = DragSpinBox(1, 127)
+            spin.setFixedWidth(70)
             spin.setValue(int(self._data["velocity"][col]))
             self.grid.addWidget(spin, 2, col + 1)
         # v-random row
         self.grid.addWidget(QLabel("V-Random"), 3, 0)
         for col in range(length):
             spin = DragSpinBox(0, 100)
+            spin.setFixedWidth(70)
             spin.setValue(int(self._data["v-random"][col]))
             self.grid.addWidget(spin, 3, col + 1)
         # s-prob row
         self.grid.addWidget(QLabel("S-Prob"), 4, 0)
         for col in range(length):
             spin = DragSpinBox(0, 100)
+            spin.setFixedWidth(70)
             spin.setValue(int(self._data["s-prob"][col]))
             self.grid.addWidget(spin, 4, col + 1)
         # s-oct row
         self.grid.addWidget(QLabel("S-Oct"), 5, 0)
         for col in range(length):
             box = QComboBox()
+            box.setFixedWidth(70)
             box.addItems([str(i) for i in range(-2,3)])
             cur = str(self._data.get("s-oct", [0]*length)[col])
             idx = box.findText(cur)
@@ -329,6 +338,7 @@ class PatternWidget(QGroupBox):
         OCT_OPTIONS = ["0","+1","+2","-1","-2","+-1","+-2"]
         for col in range(length):
             box = QComboBox()
+            box.setFixedWidth(70)
             box.addItems(OCT_OPTIONS)
             cur = str(self._data.get("r-oct", ["0"]*length)[col])
             idx = box.findText(cur)
@@ -339,6 +349,7 @@ class PatternWidget(QGroupBox):
         self.grid.addWidget(QLabel("Gate"), 7, 0)
         for col in range(length):
             spin = GateSpinBox()
+            spin.setFixedWidth(70)
             val = self._data["gate"][col]
             if isinstance(val, str) and val.upper() == "T":
                 spin.setText("T")
