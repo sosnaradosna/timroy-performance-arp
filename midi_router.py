@@ -210,6 +210,21 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             if len(vrandom_list) < length:
                 vrandom_list += [0] * (length - len(vrandom_list))
 
+        # Prepare s-prob list (0-100)
+        sprob_raw = pconf.get("s-prob", pconf.get("sprob", []))
+        if not sprob_raw:
+            sprob_list = [100] * length
+        else:
+            sprob_list = []
+            for v in sprob_raw[:length]:
+                try:
+                    val = int(v)
+                except (ValueError, TypeError):
+                    val = 100
+                sprob_list.append(max(0, min(100, val)))
+            if len(sprob_list) < length:
+                sprob_list += [100] * (length - len(sprob_list))
+
         division_str = str(pconf.get("division", "1/16"))
         pulses_val = parse_division(division_str)
 
@@ -237,6 +252,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             "octave": max(-5, min(5, octave_shift)),  # clamp defensively
             "velocity": velocity_list,
             "vrandom": vrandom_list,
+            "sprob": sprob_list,
             "gate": gate_list,
             "pulses": float(pulses_val),
         }
@@ -477,6 +493,7 @@ def main():
                         velocities = cfg["velocity"]
                         vrands = cfg["vrandom"]
                         gates = cfg["gate"]
+                        sprobs = cfg.get("sprob", [100]*len(steps))
 
                         step_pos = rt["step"] % plen
                         # Reset random cache at start of cycle
@@ -484,9 +501,14 @@ def main():
                             rt["rand"] = [None] * len(steps)
                             rt["rand_vel"] = [None] * len(velocities)
 
+                        # Probability check
+                        if random.randint(1,100) > sprobs[step_pos % len(sprobs)]:
+                            rt["step"] = (rt["step"] + 1) % plen
+                            continue
+
                         step_val = steps[step_pos]
 
-                        # Handle 'R' (random) value
+                        # note index resolution
                         if isinstance(step_val, str):
                             if step_val.upper() == "X":
                                 # rest – advance step and skip note generation

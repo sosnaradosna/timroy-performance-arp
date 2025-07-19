@@ -46,7 +46,7 @@ DIVISION_OPTIONS = [
     "1/4q", "1/8q", "1/16q",
 ]
 
-STEP_OPTIONS = ["R"] + [str(i) for i in range(1, 9)]
+STEP_OPTIONS = ["X", "R"] + [str(i) for i in range(1, 9)]
 
 
 class DragSpinBox(QLineEdit):
@@ -256,6 +256,7 @@ class PatternWidget(QGroupBox):
             ("steps", "R"),
             ("velocity", 100),
             ("v-random", 0),
+            ("s-prob", 100),
             ("gate", 100),
         ):
             arr = self._data.get(key, [])
@@ -288,8 +289,14 @@ class PatternWidget(QGroupBox):
             spin = DragSpinBox(0, 100)
             spin.setValue(int(self._data["v-random"][col]))
             self.grid.addWidget(spin, 3, col + 1)
+        # s-prob row
+        self.grid.addWidget(QLabel("S-Prob"), 4, 0)
+        for col in range(length):
+            spin = DragSpinBox(0, 100)
+            spin.setValue(int(self._data["s-prob"][col]))
+            self.grid.addWidget(spin, 4, col + 1)
         # Gate row
-        self.grid.addWidget(QLabel("Gate"), 4, 0)
+        self.grid.addWidget(QLabel("Gate"), 5, 0)
         for col in range(length):
             spin = GateSpinBox()
             val = self._data["gate"][col]
@@ -297,7 +304,7 @@ class PatternWidget(QGroupBox):
                 spin.setText("T")
             else:
                 spin.setText(str(int(val)))
-            self.grid.addWidget(spin, 4, col + 1)
+            self.grid.addWidget(spin, 5, col + 1)
 
     # --------------------------------- export --------------------------------
 
@@ -310,6 +317,7 @@ class PatternWidget(QGroupBox):
         steps: List[Union[str, int]] = []
         velocity: List[int] = []
         vrand: List[int] = []
+        sprob: List[int] = []
         gate: List[Union[int, str]] = []
 
         # Extract from grid widgets row by row
@@ -325,9 +333,13 @@ class PatternWidget(QGroupBox):
         for col in range(length):
             spin: DragSpinBox = self.grid.itemAtPosition(3, col + 1).widget()  # type: ignore
             vrand.append(spin.value())
-        # Gate row (row 4)
+        # s-prob row (row 4)
         for col in range(length):
-            spin: GateSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore
+            spin: DragSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore
+            sprob.append(spin.value())
+        # Gate row (row 5)
+        for col in range(length):
+            spin: GateSpinBox = self.grid.itemAtPosition(5, col + 1).widget()  # type: ignore
             text = spin.value_text()
             if text == "T":
                 gate.append("T")
@@ -342,6 +354,7 @@ class PatternWidget(QGroupBox):
             "steps": steps,
             "velocity": velocity,
             "v-random": vrand,
+            "s-prob": sprob,
             "gate": gate,
             "oktawa": octave,
             "division": division,
@@ -380,9 +393,14 @@ class PatternWidget(QGroupBox):
             spin: DragSpinBox = self.grid.itemAtPosition(3, col + 1).widget()  # type: ignore[assignment]
             if random.randint(1, 100) <= settings.vrandom:
                 spin.setValue(random.randint(0, 100))  # type: ignore[attr-defined]
+        # s-prob row
+        for col in range(length):
+            spin: DragSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore[assignment]
+            if random.randint(1, 100) <= settings.sprob:
+                spin.setValue(random.randint(0, 100))  # type: ignore[attr-defined]
         # Gate row
         for col in range(length):
-            spin: GateSpinBox = self.grid.itemAtPosition(4, col + 1).widget()  # type: ignore
+            spin: GateSpinBox = self.grid.itemAtPosition(5, col + 1).widget()  # type: ignore
             if random.randint(1, 100) <= settings.gate:
                 if settings.allow_gate_T and random.random() < 0.2:
                     spin.setText("T")
@@ -403,6 +421,7 @@ class RandomSettings:
     steps: int = 100
     velocity: int = 100
     vrandom: int = 100
+    sprob: int = 100
     gate: int = 100
     patterns_enabled: Dict[str, bool] = field(
         default_factory=lambda: {
@@ -438,6 +457,7 @@ class RandomSettingsDialog(QDialog):
             ("Steps", "steps"),
             ("Velocity", "velocity"),
             ("V-Random", "vrandom"),
+            ("S-Prob", "sprob"),
             ("Gate", "gate"),
         ]
         for label, attr in sliders_cfg:
