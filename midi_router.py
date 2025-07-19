@@ -225,6 +225,21 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             if len(sprob_list) < length:
                 sprob_list += [100] * (length - len(sprob_list))
 
+        # Prepare s-oct list (-2..2)
+        soct_raw = pconf.get("s-oct", pconf.get("soct", []))
+        if not soct_raw:
+            soct_list = [0] * length
+        else:
+            soct_list = []
+            for v in soct_raw[:length]:
+                try:
+                    val = int(v)
+                except (ValueError, TypeError):
+                    val = 0
+                soct_list.append(max(-2, min(2, val)))
+            if len(soct_list) < length:
+                soct_list += [0] * (length - len(soct_list))
+
         division_str = str(pconf.get("division", "1/16"))
         pulses_val = parse_division(division_str)
 
@@ -253,6 +268,7 @@ def load_config() -> Tuple[int, Dict[str, int], Dict[str, Dict[str, Any]]]:
             "velocity": velocity_list,
             "vrandom": vrandom_list,
             "sprob": sprob_list,
+            "soct": soct_list,
             "gate": gate_list,
             "pulses": float(pulses_val),
         }
@@ -352,6 +368,7 @@ def main():
         steps = cfg["steps"]
         velocities = cfg["velocity"]
         vrands = cfg["vrandom"]
+        gates = cfg["gate"]
 
         if plen == 0 or not steps or not chord_notes:
             return
@@ -409,6 +426,21 @@ def main():
 
         port, ch = outputs[pattern_name]
         port.send(mido.Message("note_on", note=note_num, velocity=vel, channel=ch))
+
+        # Register playing note & gate so countdown can turn it off correctly
+        rt["note_on"] = note_num
+        gate_val = gates[step_pos % len(gates)] if gates else 100
+        if isinstance(gate_val, str) and str(gate_val).upper() == "T":
+            rt["gate_left"] = -1.0  # sustain until non-tie
+            rt["tie_prev"] = True
+        else:
+            try:
+                gate_pct = int(gate_val)
+            except Exception:
+                gate_pct = 100
+            rt["gate_left"] = cfg["pulses"] * gate_pct / 100.0
+            rt["tie_prev"] = False
+
         last_played[pattern_name] = note_num
 
         # advance step for next cycle counting
@@ -494,6 +526,7 @@ def main():
                         vrands = cfg["vrandom"]
                         gates = cfg["gate"]
                         sprobs = cfg.get("sprob", [100]*len(steps))
+                        socts = cfg.get("soct", [0]*len(steps))
 
                         step_pos = rt["step"] % plen
                         # Reset random cache at start of cycle
@@ -525,7 +558,7 @@ def main():
 
                         if idx is None or not (1 <= idx <= ln):
                             idx = random.randint(1, ln)
-                        note = chord_notes[idx - 1]
+                        note = chord_notes[idx - 1] + (cfg["octave"] + socts[step_pos % len(socts)]) * 12
                         # choose velocity for this step
                         vel_val = velocities[step_pos % len(velocities)] if velocities else 100
                         vrand_val = vrands[step_pos % len(vrands)] if vrands else 0
@@ -556,9 +589,7 @@ def main():
                         gate_val = gates[step_pos % len(gates)] if gates else 100
                         tie_flag = isinstance(gate_val, str) and str(gate_val).upper() == "T"
 
-                        # apply octave shift (12 semitones per octave)
-                        octave = int(cfg["octave"])
-                        note += octave * 12
+                        # note already includes global + step octave shift
                         if not (0 <= note <= 127):
                             continue  # skip if out of MIDI range
                         port, ch = outputs[name]
