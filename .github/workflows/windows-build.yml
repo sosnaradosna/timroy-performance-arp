@@ -35,5 +35,5 @@ jobs:
         with:
           name: Windows-release
           path: |
-            "dist/Tim Roy Performer Arp/**"
-            TimRoyPerformerArp_Setup.exe 
+            dist/Tim Roy Performer Arp/**
+            Output/TimRoyPerformerArp_Setup.exe 
